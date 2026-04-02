@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+
+# Models (large files - download via script)
+models/*.onnx
+models/*.rknn
+
+# Face database (contains biometric data)
+data/face_db/*.npz
+
+# Database
+data/*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Calibration images (can be large)
+data/calibration/*.jpg
+data/calibration/*.png
+
+/docs

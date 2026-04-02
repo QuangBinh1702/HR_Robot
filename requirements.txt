@@ -1,0 +1,40 @@
+# ========== Core AI & Computer Vision ==========
+numpy>=1.24.0
+opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
+onnxruntime>=1.16.0
+insightface>=0.7.3
+scikit-learn>=1.3.0
+
+# ========== Image Processing ==========
+Pillow>=10.0.0
+
+# ========== Database ==========
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+psycopg2-binary>=2.9.0   # PostgreSQL driver
+
+# ========== Backend API ==========
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+python-multipart>=0.0.6   # File uploads
+python-jose[cryptography]>=3.3.0  # JWT auth
+passlib[bcrypt]>=1.7.4
+
+# ========== Utilities ==========
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+loguru>=0.7.0
+tqdm>=4.66.0
+requests>=2.31.0
+
+# ========== RKNN (install on board only) ==========
+# rknn-toolkit-lite2  # Install separately on RK3588
+
+# ========== ROS2 (install via apt on board) ==========
+# rclpy, cv_bridge, sensor_msgs  # Install via ROS2 packages
+
+# ========== Testing ==========
+pytest>=7.4.0
+httpx>=0.25.0  # For testing FastAPI
