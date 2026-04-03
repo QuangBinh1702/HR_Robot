@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import DATABASE_URL
-from src.database.models import Base, Member, AttendanceLog, SpaceStatus, get_engine, get_session
+from src.database.models import Base, Member, MemberEmbedding, AttendanceLog, SpaceStatus, get_engine, get_session
 
 
 def init_tables():
@@ -104,13 +104,15 @@ def verify_database():
     session = get_session()
     
     members = session.query(Member).count()
+    embeddings = session.query(MemberEmbedding).count()
     logs = session.query(AttendanceLog).count()
     statuses = session.query(SpaceStatus).count()
     
     print(f"\n[DB] Database contents:")
-    print(f"  Members:         {members}")
-    print(f"  Attendance Logs: {logs}")
-    print(f"  Space Statuses:  {statuses}")
+    print(f"  Members:           {members}")
+    print(f"  Member Embeddings: {embeddings}")
+    print(f"  Attendance Logs:   {logs}")
+    print(f"  Space Statuses:    {statuses}")
     
     session.close()
 

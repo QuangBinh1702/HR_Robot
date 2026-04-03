@@ -20,11 +20,15 @@ env/
 models/*.onnx
 models/*.rknn
 
-# Face database (contains biometric data)
+# Face database legacy files (migrated to SQLite)
 data/face_db/*.npz
+data/face_db/*.json
+data/face_db/backup_before_migration/
 
 # Database
 data/*.db
+data/*.db-wal
+data/*.db-shm
 
 # IDE
 .vscode/

@@ -30,8 +30,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import (
     CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
-    RECOGNITION_THRESHOLD, FACE_DB_DIR, MAX_ROOM_CAPACITY
+    RECOGNITION_THRESHOLD, MAX_ROOM_CAPACITY
 )
+from src.database.models import session_scope
+from src.database.repository import FaceRepository
+from src.embedding_cache import EmbeddingCache
 
 
 class FaceRecognitionPipeline:
@@ -42,11 +45,17 @@ class FaceRecognitionPipeline:
     
     def __init__(self, model_name: str = "buffalo_l", threshold: float = None):
         self.threshold = threshold or RECOGNITION_THRESHOLD
-        self.face_db = {}  # {name: [embedding1, embedding2, ...]}
-        self.face_info = {}  # {name: {registered_at, num_embeddings, ...}}
+        self.model_name = model_name
+        
+        # Database-backed face matching
+        self.repo = FaceRepository()
+        self.cache = EmbeddingCache(self.repo, model_name=model_name)
         
         self._init_insightface(model_name)
-        self._load_database()
+        
+        # Load embeddings from SQLite into memory
+        count = self.cache.rebuild()
+        print(f"[Pipeline] Loaded {count} embeddings from database")
     
     def _init_insightface(self, model_name: str):
         """Initialize InsightFace FaceAnalysis."""
@@ -65,45 +74,6 @@ class FaceRecognitionPipeline:
         )
         self.app.prepare(ctx_id=0, det_size=(320, 320))
         print(f"[Pipeline] Model loaded successfully ✓")
-    
-    def _load_database(self):
-        """Load face database from disk."""
-        db_path = FACE_DB_DIR / "face_database.json"
-        emb_path = FACE_DB_DIR / "embeddings.npz"
-        
-        if db_path.exists() and emb_path.exists():
-            # Load metadata
-            with open(db_path, 'r', encoding='utf-8') as f:
-                self.face_info = json.load(f)
-            
-            # Load embeddings
-            data = np.load(emb_path, allow_pickle=True)
-            for name in self.face_info:
-                key = f"emb_{name}"
-                if key in data:
-                    self.face_db[name] = data[key]
-            
-            print(f"[Pipeline] Loaded {len(self.face_db)} registered faces ✓")
-            for name, info in self.face_info.items():
-                print(f"  - {name} ({info.get('num_embeddings', '?')} samples)")
-        else:
-            print("[Pipeline] No face database found (starting fresh)")
-    
-    def _save_database(self):
-        """Save face database to disk."""
-        FACE_DB_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # Save metadata as JSON (human readable)
-        db_path = FACE_DB_DIR / "face_database.json"
-        with open(db_path, 'w', encoding='utf-8') as f:
-            json.dump(self.face_info, f, ensure_ascii=False, indent=2)
-        
-        # Save embeddings as NPZ (efficient binary)
-        emb_path = FACE_DB_DIR / "embeddings.npz"
-        emb_dict = {f"emb_{name}": np.array(embs) for name, embs in self.face_db.items()}
-        np.savez(emb_path, **emb_dict)
-        
-        print(f"[Pipeline] Database saved ({len(self.face_db)} faces) ✓")
     
     def detect_faces(self, image: np.ndarray) -> list:
         """
@@ -133,31 +103,15 @@ class FaceRecognitionPipeline:
         return results
     
     def _match_face(self, embedding: np.ndarray) -> tuple:
-        """Match an embedding against the database."""
-        if not self.face_db:
-            return ("Người lạ", 0.0)
-        
-        best_name = "Người lạ"
-        best_score = 0.0
-        
-        for name, embeddings in self.face_db.items():
-            # Cosine similarity with all registered embeddings
-            similarities = np.dot(embeddings, embedding)
-            max_sim = float(np.max(similarities))
-            
-            if max_sim > best_score:
-                best_score = max_sim
-                best_name = name
-        
-        if best_score < self.threshold:
-            return ("Người lạ", best_score)
-        
-        return (best_name, best_score)
+        """Match an embedding against the database cache."""
+        name, score, _ = self.cache.match(embedding, self.threshold)
+        return (name, score)
     
     def register_face(self, name: str, image: np.ndarray) -> dict:
         """
-        Register the largest UNKNOWN face in the image.
-        Skips faces that are already registered.
+        Register a face for the given name.
+        Allows adding more samples for the same person.
+        Rejects if the face matches a DIFFERENT known person.
         
         Returns:
             {'success': bool, 'message': str}
@@ -167,57 +121,48 @@ class FaceRecognitionPipeline:
         if not faces:
             return {'success': False, 'message': 'Không phát hiện khuôn mặt'}
         
-        # Filter out already-registered faces
-        unknown_faces = []
+        # Filter: keep faces that are unknown OR match the target name
+        eligible_faces = []
         for f in faces:
             emb = f.normed_embedding
-            recognized_name, score = self._match_face(emb)
-            if recognized_name == "Người lạ":
-                unknown_faces.append(f)
+            matched_name, score = self._match_face(emb)
+            if matched_name == "Người lạ" or matched_name == name:
+                eligible_faces.append(f)
+            # If matched to another person → skip this face
         
-        if not unknown_faces:
-            return {'success': False, 'message': 'Tất cả khuôn mặt trong frame đã được đăng ký rồi'}
+        if not eligible_faces:
+            return {'success': False, 'message': 'Khuôn mặt đã được đăng ký cho người khác'}
         
-        if len(unknown_faces) > 1:
-            # Pick the largest unknown face
-            face = max(unknown_faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
-        else:
-            face = unknown_faces[0]
-        
+        # Pick the largest eligible face
+        face = max(eligible_faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
         embedding = face.normed_embedding
         
-        # Add to database
-        if name not in self.face_db:
-            self.face_db[name] = np.empty((0, embedding.shape[0]), dtype=np.float32)
-            self.face_info[name] = {
-                'registered_at': datetime.now().isoformat(),
-                'num_embeddings': 0,
-            }
+        # Save to SQLite
+        with session_scope() as session:
+            member = self.repo.get_or_create_member(session, name)
+            self.repo.add_embedding(session, member.id, embedding, model_name=self.model_name)
+            total = self.repo.count_embeddings(session, member.id, model_name=self.model_name)
         
-        # Stack new embedding onto existing array
-        self.face_db[name] = np.vstack([self.face_db[name], embedding.reshape(1, -1)])
-        self.face_info[name]['num_embeddings'] = len(self.face_db[name])
-        self.face_info[name]['last_updated'] = datetime.now().isoformat()
-        
-        self._save_database()
+        self.cache.rebuild()
         
         return {
-            'success': True, 
-            'message': f"Đã đăng ký '{name}' (mẫu #{self.face_info[name]['num_embeddings']})"
+            'success': True,
+            'message': f"Đã đăng ký '{name}' (mẫu #{total})"
         }
     
     def delete_face(self, name: str) -> bool:
-        """Remove a face from the database."""
-        if name in self.face_db:
-            del self.face_db[name]
-            del self.face_info[name]
-            self._save_database()
+        """Delete all embeddings for a person (keeps member row for attendance history)."""
+        with session_scope() as session:
+            deleted = self.repo.delete_embeddings_by_name(session, name, model_name=self.model_name)
+        if deleted > 0:
+            self.cache.rebuild()
             return True
         return False
     
     def list_faces(self) -> dict:
-        """List all registered faces."""
-        return self.face_info.copy()
+        """List all registered faces with embedding counts."""
+        with session_scope() as session:
+            return self.repo.list_registered_faces(session, model_name=self.model_name)
     
     def get_headcount(self, image: np.ndarray) -> int:
         """Count number of faces in image."""
@@ -326,7 +271,7 @@ def mode_recognition(pipeline: FaceRecognitionPipeline):
     print("HR Robot - Nhan dien khuon mat")
     print(f"{'='*50}")
     print(f"Camera: {CAMERA_INDEX} ({CAMERA_WIDTH}x{CAMERA_HEIGHT})")
-    print(f"Da dang ky: {len(pipeline.face_db)} nguoi")
+    print(f"Da dang ky: {len(pipeline.list_faces())} nguoi")
     print(f"Gioi han phong: {MAX_ROOM_CAPACITY} nguoi")
     print(f"Nguong nhan dien: {pipeline.threshold}")
     print(f"\nPhim tat:")

@@ -1,17 +1,16 @@
 """
 Database Models - SQLAlchemy ORM
-Implements the 3 core tables: Members, AttendanceLogs, SpaceStatus.
-
-Schema matches the design in cac_cong_viec.md.
+Core tables: Members, MemberEmbedding, AttendanceLogs, SpaceStatus.
 """
 
 import sys
 from pathlib import Path
 from datetime import datetime
+from contextlib import contextmanager
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, Boolean,
-    DateTime, Text, ForeignKey, LargeBinary
+    DateTime, Text, ForeignKey, LargeBinary, event
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
@@ -26,7 +25,7 @@ Base = declarative_base()
 class Member(Base):
     """
     Bảng Members (Quản lý hồ sơ)
-    Lưu trữ thông tin thành viên và vector đặc trưng khuôn mặt.
+    Lưu trữ thông tin thành viên.
     """
     __tablename__ = 'members'
     
@@ -34,9 +33,8 @@ class Member(Base):
     full_name = Column(String(255), nullable=False)
     role = Column(String(100), default='member')  # member, admin, leader
     contact_info = Column(String(255), nullable=True)
+    # DEPRECATED: dùng bảng member_embeddings thay thế. Giữ lại để không break schema cũ.
     face_embedding = Column(LargeBinary, nullable=True)
-    # Stores serialized numpy array of 512-d vector(s)
-    # Do NOT store original photos for privacy
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -44,9 +42,30 @@ class Member(Base):
     
     # Relationships
     attendance_logs = relationship('AttendanceLog', back_populates='member')
+    embeddings = relationship('MemberEmbedding', back_populates='member', cascade='all, delete-orphan')
     
     def __repr__(self):
         return f"<Member(id={self.id}, name='{self.full_name}', role='{self.role}')>"
+
+
+class MemberEmbedding(Base):
+    """
+    Bảng MemberEmbeddings (Face embeddings)
+    Mỗi member có thể có nhiều embedding (multi-angle capture).
+    Mỗi embedding là 512-d float32 vector = 2048 bytes.
+    """
+    __tablename__ = 'member_embeddings'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    member_id = Column(Integer, ForeignKey('members.id', ondelete='CASCADE'), nullable=False, index=True)
+    embedding = Column(LargeBinary, nullable=False)  # 512 x float32 = 2048 bytes
+    model_name = Column(String(50), nullable=False, default='buffalo_l')
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    member = relationship('Member', back_populates='embeddings')
+
+    def __repr__(self):
+        return f"<MemberEmbedding(id={self.id}, member_id={self.member_id}, model='{self.model_name}')>"
 
 
 class AttendanceLog(Base):
@@ -93,23 +112,58 @@ class SpaceStatus(Base):
                 f"overloaded={self.is_overloaded})>")
 
 
-# ========== Database Engine Setup ==========
+# ========== Database Engine Setup (Singleton + WAL) ==========
+
+def _build_engine():
+    """Create database engine with SQLite optimizations."""
+    connect_args = {}
+    if DATABASE_URL.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+
+    eng = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+
+    if DATABASE_URL.startswith("sqlite"):
+        @event.listens_for(eng, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON;")
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.close()
+
+    return eng
+
+
+engine = _build_engine()
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
 
 def get_engine():
-    """Create database engine."""
-    return create_engine(DATABASE_URL, echo=False)
+    """Return the singleton engine."""
+    return engine
 
 
 def get_session():
     """Create a new database session."""
-    engine = get_engine()
-    Session = sessionmaker(bind=engine)
-    return Session()
+    return SessionLocal()
+
+
+@contextmanager
+def session_scope():
+    """Context manager: auto commit/rollback/close."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def init_db():
     """Create all tables."""
-    engine = get_engine()
     Base.metadata.create_all(engine)
     print(f"[DB] Database initialized: {DATABASE_URL}")
     print(f"[DB] Tables: {list(Base.metadata.tables.keys())}")
