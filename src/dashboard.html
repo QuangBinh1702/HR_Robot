@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HR Robot — Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        surface: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 700: '#1e293b', 800: '#0f172a', 900: '#020617' },
+                        accent: { 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7' },
+                        success: { 400: '#4ade80', 500: '#22c55e', 600: '#16a34a' },
+                        danger: { 400: '#f87171', 500: '#ef4444', 600: '#dc2626' },
+                        warn: { 400: '#fbbf24', 500: '#f59e0b' },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0f172a; color: #e2e8f0; }
+        .card { background: rgba(30,41,59,.65); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,.12); border-radius: 1rem; }
+        .stat-glow-green { box-shadow: 0 0 24px rgba(34,197,94,.12); }
+        .stat-glow-blue  { box-shadow: 0 0 24px rgba(14,165,233,.12); }
+        .stat-glow-amber { box-shadow: 0 0 24px rgba(245,158,11,.12); }
+        .stat-glow-red   { box-shadow: 0 0 24px rgba(239,68,68,.18); }
+        .pulse-dot { animation: pulse-ring 2s ease-in-out infinite; }
+        @keyframes pulse-ring {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .5; transform: scale(1.8); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .pulse-dot { animation: none; }
+        }
+        .table-row:hover { background: rgba(148,163,184,.06); }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(148,163,184,.2); border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen font-sans antialiased">
+
+<!-- Navbar -->
+<nav class="fixed top-4 left-4 right-4 z-50 card px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-accent-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-accent-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
+            </svg>
+        </div>
+        <h1 class="text-lg font-semibold text-white">HR Robot</h1>
+    </div>
+    <div class="flex items-center gap-4">
+        <div id="ws-status" class="flex items-center gap-2 text-sm text-surface-200/60">
+            <span class="w-2 h-2 rounded-full bg-surface-200/40"></span>
+            Đang kết nối...
+        </div>
+        <span id="clock" class="text-sm text-surface-200/60 tabular-nums"></span>
+    </div>
+</nav>
+
+<!-- Main Content -->
+<main class="pt-24 pb-12 px-4 max-w-7xl mx-auto space-y-6">
+
+    <!-- Overload Alert Banner -->
+    <div id="overload-banner" class="hidden card stat-glow-red border-danger-500/30 p-4 flex items-center gap-3">
+        <svg class="w-6 h-6 text-danger-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+        <div>
+            <p class="font-semibold text-danger-400">QUÁ TẢI!</p>
+            <p class="text-sm text-surface-200/70">Số người vượt quá giới hạn phòng.</p>
+        </div>
+    </div>
+
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Headcount -->
+        <div id="card-headcount" class="card stat-glow-blue p-5">
+            <p class="text-sm font-medium text-surface-200/60 mb-1">Số người hiện tại</p>
+            <div class="flex items-end gap-2">
+                <span id="val-headcount" class="text-4xl font-bold text-white tabular-nums">—</span>
+                <span id="val-capacity" class="text-lg text-surface-200/40 mb-1">/ —</span>
+            </div>
+        </div>
+        <!-- Present Members -->
+        <div class="card stat-glow-green p-5">
+            <p class="text-sm font-medium text-surface-200/60 mb-1">Thành viên có mặt</p>
+            <span id="val-present" class="text-4xl font-bold text-success-400 tabular-nums">—</span>
+        </div>
+        <!-- Unknown -->
+        <div class="card stat-glow-amber p-5">
+            <p class="text-sm font-medium text-surface-200/60 mb-1">Người lạ</p>
+            <span id="val-unknown" class="text-4xl font-bold text-warn-400 tabular-nums">—</span>
+        </div>
+        <!-- Registered -->
+        <div class="card p-5">
+            <p class="text-sm font-medium text-surface-200/60 mb-1">Đã đăng ký</p>
+            <span id="val-registered" class="text-4xl font-bold text-white tabular-nums">—</span>
+        </div>
+    </div>
+
+    <!-- Middle Row: Present Members + KPI -->
+    <div class="grid lg:grid-cols-3 gap-4">
+        <!-- Present Members List -->
+        <div class="card p-5 lg:col-span-1">
+            <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider mb-4">Đang có mặt</h2>
+            <ul id="present-list" class="space-y-2 max-h-64 overflow-y-auto">
+                <li class="text-sm text-surface-200/40 italic">Chưa có dữ liệu</li>
+            </ul>
+        </div>
+        <!-- KPI Stats -->
+        <div class="card p-5 lg:col-span-2">
+            <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider mb-4">Thống kê 7 ngày</h2>
+            <div class="grid grid-cols-3 gap-4 mb-4">
+                <div>
+                    <p class="text-xs text-surface-200/50">Thời gian TB</p>
+                    <p id="kpi-avg-duration" class="text-xl font-bold text-white tabular-nums">— phút</p>
+                </div>
+                <div>
+                    <p class="text-xs text-surface-200/50">Tỷ lệ điểm danh</p>
+                    <p id="kpi-rate" class="text-xl font-bold text-accent-400 tabular-nums">— %</p>
+                </div>
+                <div>
+                    <p class="text-xs text-surface-200/50">Giờ cao điểm</p>
+                    <p id="kpi-peak" class="text-xl font-bold text-warn-400">—</p>
+                </div>
+            </div>
+            <div class="h-48">
+                <canvas id="chart-daily"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Row: Attendance Table + Peak Hours Chart -->
+    <div class="grid lg:grid-cols-3 gap-4">
+        <!-- Today Attendance Table -->
+        <div class="card p-5 lg:col-span-2 overflow-hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider">Điểm danh hôm nay</h2>
+                <span id="attendance-count" class="text-xs text-surface-200/40 tabular-nums">0 bản ghi</span>
+            </div>
+            <div class="overflow-x-auto -mx-5 px-5">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-surface-200/50 border-b border-surface-200/10">
+                            <th class="pb-3 pr-4 font-medium">Họ tên</th>
+                            <th class="pb-3 pr-4 font-medium">Check-in</th>
+                            <th class="pb-3 pr-4 font-medium">Check-out</th>
+                            <th class="pb-3 pr-4 font-medium text-right">Thời gian</th>
+                            <th class="pb-3 font-medium text-right">Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attendance-tbody">
+                        <tr><td colspan="5" class="py-8 text-center text-surface-200/30 italic">Chưa có dữ liệu</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <!-- Peak Hours Chart -->
+        <div class="card p-5 lg:col-span-1">
+            <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider mb-4">Giờ cao điểm</h2>
+            <div class="h-64">
+                <canvas id="chart-peak"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Members List -->
+    <div class="card p-5">
+        <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider mb-4">Thành viên đã đăng ký</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" id="members-grid">
+            <p class="text-sm text-surface-200/30 italic col-span-full">Đang tải...</p>
+        </div>
+    </div>
+
+</main>
+
+<script>
+// ========== Config ==========
+const API = window.location.origin;
+const WS_URL = `ws://${window.location.host}/ws/live`;
+
+// ========== State ==========
+let wsConn = null;
+let chartDaily = null;
+let chartPeak = null;
+let reconnectTimer = null;
+
+// ========== DOM Helpers ==========
+const $ = id => document.getElementById(id);
+
+function formatTime(iso) {
+    if (!iso) return '—';
+    // API returns UTC without "Z" suffix — append it so JS converts to local timezone
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDuration(mins) {
+    if (mins == null) return '—';
+    if (mins < 60) return `${Math.round(mins)} phút`;
+    const h = Math.floor(mins / 60);
+    const m = Math.round(mins % 60);
+    return `${h}h ${m}p`;
+}
+
+// ========== Clock ==========
+function updateClock() {
+    $('clock').textContent = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ========== Fetch Helpers ==========
+async function fetchJSON(url) {
+    try {
+        const r = await fetch(url);
+        return await r.json();
+    } catch (e) {
+        console.warn('Fetch error:', url, e);
+        return null;
+    }
+}
+
+// ========== Update Functions ==========
+
+function updateStatus(data) {
+    // Headcount
+    $('val-headcount').textContent = data.headcount ?? 0;
+    $('val-capacity').textContent = `/ ${data.max_capacity ?? 20}`;
+    $('val-present').textContent = data.present_count ?? 0;
+    $('val-unknown').textContent = data.unknown_count ?? 0;
+
+    // Overload
+    const banner = $('overload-banner');
+    const headcountCard = $('card-headcount');
+    if (data.is_overloaded) {
+        banner.classList.remove('hidden');
+        headcountCard.classList.add('stat-glow-red');
+        headcountCard.classList.remove('stat-glow-blue');
+        $('val-headcount').classList.add('text-danger-400');
+        $('val-headcount').classList.remove('text-white');
+    } else {
+        banner.classList.add('hidden');
+        headcountCard.classList.remove('stat-glow-red');
+        headcountCard.classList.add('stat-glow-blue');
+        $('val-headcount').classList.remove('text-danger-400');
+        $('val-headcount').classList.add('text-white');
+    }
+
+    // Present members list
+    const list = $('present-list');
+    const members = data.present_members || [];
+    if (members.length === 0) {
+        list.innerHTML = '<li class="text-sm text-surface-200/40 italic">Không có ai</li>';
+    } else {
+        list.innerHTML = members.map(m => `
+            <li class="flex items-center gap-3 py-2 px-3 rounded-lg bg-surface-200/5">
+                <span class="relative flex h-2.5 w-2.5">
+                    <span class="pulse-dot absolute inline-flex h-full w-full rounded-full bg-success-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success-500"></span>
+                </span>
+                <span class="text-sm text-white font-medium">${m.full_name}</span>
+                <span class="ml-auto text-xs text-surface-200/40">${m.since ? formatTime(m.since) : ''}</span>
+            </li>
+        `).join('');
+    }
+}
+
+function updateAttendanceTable(data) {
+    const tbody = $('attendance-tbody');
+    const items = data?.items || [];
+    $('attendance-count').textContent = `${data?.total || 0} bản ghi`;
+
+    if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-surface-200/30 italic">Chưa có bản ghi hôm nay</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = items.map(item => {
+        const statusBadge = item.status === 'present'
+            ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-500/15 text-success-400 text-xs font-medium">Có mặt</span>'
+            : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-200/10 text-surface-200/50 text-xs font-medium">Đã ra</span>';
+        return `
+            <tr class="table-row border-b border-surface-200/5 transition-colors duration-150">
+                <td class="py-3 pr-4 font-medium text-white">${item.full_name}</td>
+                <td class="py-3 pr-4 text-surface-200/70 tabular-nums">${formatTime(item.check_in_time)}</td>
+                <td class="py-3 pr-4 text-surface-200/70 tabular-nums">${formatTime(item.check_out_time)}</td>
+                <td class="py-3 pr-4 text-right text-surface-200/70 tabular-nums">${formatDuration(item.duration_minutes)}</td>
+                <td class="py-3 text-right">${statusBadge}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateMembers(data) {
+    const grid = $('members-grid');
+    const items = data?.items || [];
+    $('val-registered').textContent = data?.total ?? 0;
+
+    if (items.length === 0) {
+        grid.innerHTML = '<p class="text-sm text-surface-200/30 italic col-span-full">Chưa có thành viên nào</p>';
+        return;
+    }
+
+    grid.innerHTML = items.map(m => `
+        <div class="flex items-center gap-3 p-3 rounded-xl bg-surface-200/5 cursor-default hover:bg-surface-200/10 transition-colors duration-150">
+            <div class="w-10 h-10 rounded-full bg-accent-500/15 flex items-center justify-center text-accent-400 font-semibold text-sm shrink-0">
+                ${m.full_name.charAt(0).toUpperCase()}
+            </div>
+            <div class="min-w-0">
+                <p class="text-sm font-medium text-white truncate">${m.full_name}</p>
+                <p class="text-xs text-surface-200/40">${m.num_embeddings} mẫu</p>
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateStats(data) {
+    if (!data) return;
+
+    $('kpi-avg-duration').textContent = data.avg_duration_minutes ? `${data.avg_duration_minutes} phút` : '— phút';
+    $('kpi-rate').textContent = data.attendance_rate_pct != null ? `${data.attendance_rate_pct}%` : '— %';
+    $('kpi-peak').textContent = data.peak_hour ? `${data.peak_hour.hour}:00` : '—';
+
+    // Daily attendance chart
+    const daily = data.daily_attendance || [];
+    const labels = daily.map(d => {
+        const parts = d.date.split('-');
+        return `${parts[2]}/${parts[1]}`;
+    });
+    const values = daily.map(d => d.unique_members);
+
+    if (chartDaily) chartDaily.destroy();
+    const ctxD = $('chart-daily').getContext('2d');
+    chartDaily = new Chart(ctxD, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Thành viên',
+                data: values,
+                borderColor: '#0ea5e9',
+                backgroundColor: 'rgba(14,165,233,.1)',
+                fill: true,
+                tension: 0.35,
+                pointRadius: 4,
+                pointBackgroundColor: '#0ea5e9',
+                pointBorderColor: '#0f172a',
+                pointBorderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+            },
+            scales: {
+                x: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(148,163,184,.08)' } },
+                y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 11 }, stepSize: 1 }, grid: { color: 'rgba(148,163,184,.08)' } },
+            }
+        }
+    });
+
+    // Peak hours chart
+    const peak = data.peak_hours || [];
+    const peakLabels = peak.map(p => `${p.hour}h`);
+    const peakValues = peak.map(p => p.checkins);
+
+    if (chartPeak) chartPeak.destroy();
+    const ctxP = $('chart-peak').getContext('2d');
+    chartPeak = new Chart(ctxP, {
+        type: 'bar',
+        data: {
+            labels: peakLabels,
+            datasets: [{
+                label: 'Check-in',
+                data: peakValues,
+                backgroundColor: peakValues.map((v, i) => {
+                    const maxVal = Math.max(...peakValues);
+                    return v === maxVal ? 'rgba(245,158,11,.7)' : 'rgba(14,165,233,.4)';
+                }),
+                borderRadius: 6,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 11 }, stepSize: 1 }, grid: { color: 'rgba(148,163,184,.08)' } },
+            }
+        }
+    });
+}
+
+// ========== WebSocket ==========
+
+function connectWS() {
+    if (wsConn && wsConn.readyState <= 1) return;
+
+    wsConn = new WebSocket(WS_URL);
+
+    wsConn.onopen = () => {
+        $('ws-status').innerHTML = `
+            <span class="w-2 h-2 rounded-full bg-success-500"></span>
+            <span class="text-success-400">Trực tiếp</span>
+        `;
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    };
+
+    wsConn.onmessage = (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            if (data.type === 'status') {
+                updateStatus(data);
+                // Refetch attendance table if there are new events
+                if ((data.new_checkins && data.new_checkins.length > 0) ||
+                    (data.new_checkouts && data.new_checkouts.length > 0)) {
+                    fetchJSON(`${API}/api/attendance/today`).then(updateAttendanceTable);
+                }
+            }
+        } catch (err) {
+            console.warn('WS parse error:', err);
+        }
+    };
+
+    wsConn.onclose = () => {
+        $('ws-status').innerHTML = `
+            <span class="w-2 h-2 rounded-full bg-danger-400"></span>
+            <span class="text-danger-400">Mất kết nối</span>
+        `;
+        reconnectTimer = setTimeout(connectWS, 3000);
+    };
+
+    wsConn.onerror = () => wsConn.close();
+}
+
+// ========== Keep WS alive ==========
+setInterval(() => {
+    if (wsConn && wsConn.readyState === 1) {
+        wsConn.send('ping');
+    }
+}, 30000);
+
+// ========== Init ==========
+
+async function init() {
+    // Fetch all data in parallel
+    const [status, members, attendance, stats] = await Promise.all([
+        fetchJSON(`${API}/api/status`),
+        fetchJSON(`${API}/api/members`),
+        fetchJSON(`${API}/api/attendance/today`),
+        fetchJSON(`${API}/api/stats`),
+    ]);
+
+    if (status) updateStatus(status);
+    if (members) updateMembers(members);
+    if (attendance) updateAttendanceTable(attendance);
+    if (stats) updateStats(stats);
+
+    // Connect WebSocket for real-time updates
+    connectWS();
+
+    // Refresh stats every 60s
+    setInterval(async () => {
+        const s = await fetchJSON(`${API}/api/stats`);
+        if (s) updateStats(s);
+    }, 60000);
+
+    // Refresh attendance table every 30s
+    setInterval(async () => {
+        const a = await fetchJSON(`${API}/api/attendance/today`);
+        if (a) updateAttendanceTable(a);
+    }, 30000);
+}
+
+init();
+</script>
+</body>
+</html>

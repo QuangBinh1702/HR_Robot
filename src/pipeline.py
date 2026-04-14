@@ -1,9 +1,12 @@
 """
-HR Robot - Complete Face Recognition Pipeline (Phase 1)
+HR Robot - Complete Face Recognition Pipeline
 Unified pipeline: Detection → Alignment → Recognition → Registration
 
-Uses InsightFace's FaceAnalysis for reliable out-of-the-box performance.
-This is the PRIMARY approach for Phase 1 prototype.
+Supports two backends:
+  - CPU: InsightFace FaceAnalysis (ONNX Runtime)
+  - NPU: RKNN on RK3588S (lightweight SCRFD-2.5G + MobileFaceNet)
+
+Set USE_NPU=true in .env to enable NPU backend.
 
 Usage:
     python src/pipeline.py                    # Live recognition
@@ -30,35 +33,72 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import (
     CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
-    RECOGNITION_THRESHOLD, MAX_ROOM_CAPACITY
+    RECOGNITION_THRESHOLD, MAX_ROOM_CAPACITY,
+    USE_NPU, DEFAULT_EMBEDDING_MODEL_NAME,
+    SCRFD_RKNN_PATH, ARCFACE_RKNN_PATH,
+    DETECTION_INPUT_SIZE,
 )
 from src.database.models import session_scope
 from src.database.repository import FaceRepository
 from src.embedding_cache import EmbeddingCache
+from src.attendance import AttendanceManager
+from src.app_runtime import AppRuntime
+from src.api_server import start_api_server, broadcast_status
 
 
 class FaceRecognitionPipeline:
     """
-    Complete face recognition pipeline using InsightFace.
+    Complete face recognition pipeline.
+    Supports CPU (InsightFace) and NPU (RKNN on RK3588S) backends.
     Handles: detection, alignment, embedding, matching, registration.
     """
     
-    def __init__(self, model_name: str = "buffalo_l", threshold: float = None):
+    def __init__(self, model_name: str = None, threshold: float = None):
         self.threshold = threshold or RECOGNITION_THRESHOLD
-        self.model_name = model_name
+        self.model_name = model_name or DEFAULT_EMBEDDING_MODEL_NAME
         
         # Database-backed face matching
         self.repo = FaceRepository()
-        self.cache = EmbeddingCache(self.repo, model_name=model_name)
+        self.cache = EmbeddingCache(self.repo, model_name=self.model_name)
         
-        self._init_insightface(model_name)
+        self._init_backend()
         
         # Load embeddings from SQLite into memory
         count = self.cache.rebuild()
         print(f"[Pipeline] Loaded {count} embeddings from database")
     
+    def _init_backend(self):
+        """Initialize face analysis backend (NPU or CPU)."""
+        if USE_NPU:
+            self._init_rknn()
+        else:
+            self._init_insightface(self.model_name)
+    
+    def _init_rknn(self):
+        """Initialize RKNN NPU backend for RK3588S."""
+        try:
+            from src.backends.rknn_face_analysis import RKNNFaceAnalysis
+        except ImportError as e:
+            print(f"[!] RKNN backend not available: {e}")
+            print("  Falling back to CPU (InsightFace)...")
+            self._init_insightface(self.model_name)
+            return
+        
+        try:
+            self.app = RKNNFaceAnalysis(
+                det_model_path=SCRFD_RKNN_PATH,
+                rec_model_path=ARCFACE_RKNN_PATH,
+                det_size=DETECTION_INPUT_SIZE,
+            )
+            self.backend = "RK3588S NPU (RKNN)"
+            print(f"[Pipeline] NPU backend loaded [{self.backend}]")
+        except Exception as e:
+            print(f"[!] RKNN init failed: {e}")
+            print("  Falling back to CPU (InsightFace)...")
+            self._init_insightface(self.model_name)
+    
     def _init_insightface(self, model_name: str):
-        """Initialize InsightFace FaceAnalysis."""
+        """Initialize InsightFace FaceAnalysis (CPU fallback)."""
         try:
             from insightface.app import FaceAnalysis
         except ImportError:
@@ -66,21 +106,31 @@ class FaceRecognitionPipeline:
             print("Run: pip install insightface onnxruntime")
             sys.exit(1)
         
-        print(f"[Pipeline] Loading InsightFace model: {model_name}")
+        import onnxruntime as ort
+        available = ort.get_available_providers()
+        if 'CUDAExecutionProvider' in available:
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            backend = 'GPU (CUDA)'
+        else:
+            providers = ['CPUExecutionProvider']
+            backend = 'CPU (ONNX Runtime)'
+        
+        print(f"[Pipeline] Loading InsightFace model: {model_name} ({backend})")
         self.app = FaceAnalysis(
             name=model_name,
             allowed_modules=['detection', 'recognition'],
-            providers=['CPUExecutionProvider']
+            providers=providers
         )
         self.app.prepare(ctx_id=0, det_size=(320, 320))
-        print(f"[Pipeline] Model loaded successfully ✓")
+        self.backend = backend
+        print(f"[Pipeline] Model loaded successfully [{backend}]")
     
     def detect_faces(self, image: np.ndarray) -> list:
         """
         Detect and analyze all faces in an image.
         
         Returns list of dicts with:
-            bbox, score, embedding, keypoints, name, confidence
+            bbox, score, embedding, keypoints, name, confidence, member_id
         """
         faces = self.app.get(image)
         results = []
@@ -94,9 +144,10 @@ class FaceRecognitionPipeline:
             }
             
             # Match against database
-            name, confidence = self._match_face(face.normed_embedding)
+            name, confidence, member_id = self._match_face(face.normed_embedding)
             result['name'] = name
             result['confidence'] = confidence
+            result['member_id'] = member_id
             
             results.append(result)
         
@@ -104,8 +155,8 @@ class FaceRecognitionPipeline:
     
     def _match_face(self, embedding: np.ndarray) -> tuple:
         """Match an embedding against the database cache."""
-        name, score, _ = self.cache.match(embedding, self.threshold)
-        return (name, score)
+        name, score, member_id = self.cache.match(embedding, self.threshold)
+        return (name, score, member_id)
     
     def register_face(self, name: str, image: np.ndarray) -> dict:
         """
@@ -125,7 +176,7 @@ class FaceRecognitionPipeline:
         eligible_faces = []
         for f in faces:
             emb = f.normed_embedding
-            matched_name, score = self._match_face(emb)
+            matched_name, score, _ = self._match_face(emb)
             if matched_name == "Người lạ" or matched_name == name:
                 eligible_faces.append(f)
             # If matched to another person → skip this face
@@ -165,8 +216,11 @@ class FaceRecognitionPipeline:
             return self.repo.list_registered_faces(session, model_name=self.model_name)
     
     def get_headcount(self, image: np.ndarray) -> int:
-        """Count number of faces in image."""
-        faces = self.app.get(image)
+        """Count number of faces in image (detect-only, no recognition)."""
+        if hasattr(self.app, 'detect'):
+            faces = self.app.detect(image)
+        else:
+            faces = self.app.get(image)
         return len(faces)
 
 
@@ -257,15 +311,47 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
     return vis
 
 
-def mode_recognition(pipeline: FaceRecognitionPipeline):
+def _try_camera(index, backend):
+    """Try opening camera and verify it can actually grab a frame."""
+    cap = cv2.VideoCapture(index, backend)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    # Verify by reading a real frame — isOpened() alone is unreliable on Windows
+    ret, frame = cap.read()
+    if ret and frame is not None:
+        backend_names = {cv2.CAP_DSHOW: "DSHOW", cv2.CAP_MSMF: "MSMF", cv2.CAP_ANY: "ANY"}
+        print(f"Camera verified: index={index}, backend={backend_names.get(backend, backend)}")
+        return cap
+    cap.release()
+    return None
+
+
+def _open_camera(index=CAMERA_INDEX):
+    """Try to open camera at given index, fallback to scanning 0-4 if failed.
+
+    Strategy: try DSHOW first across ALL indices (fastest, most reliable for
+    USB cameras on Windows), then fall back to MSMF/ANY.
+    """
+    indices = [index] + [i for i in range(5) if i != index]
+    for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]:
+        for i in indices:
+            cap = _try_camera(i, backend)
+            if cap is not None:
+                if i != index:
+                    print(f"  (fallback from index {index} to {i})")
+                return cap
+    return None
+
+
+def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None, on_status_update=None):
     """Live face recognition mode."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap = _open_camera(CAMERA_INDEX)
+    if cap is None:
+        print("ERROR: Cannot open camera (tried indices 0-4 with DSHOW/MSMF/ANY)")
+        return
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-    
-    if not cap.isOpened():
-        print("ERROR: Cannot open camera")
-        return
     
     print(f"\n{'='*50}")
     print("HR Robot - Nhan dien khuon mat")
@@ -288,6 +374,9 @@ def mode_recognition(pipeline: FaceRecognitionPipeline):
     detect_interval = 3  # Chỉ detect mỗi 3 frame (giảm lag)
     cached_results = []
     
+    # Attendance manager (use shared instance if provided)
+    attendance = attendance_manager or AttendanceManager(pipeline.repo)
+    
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -297,6 +386,17 @@ def mode_recognition(pipeline: FaceRecognitionPipeline):
         frame_count += 1
         if frame_count % detect_interval == 0:
             cached_results = pipeline.detect_faces(frame)
+            # Process attendance only on fresh inference
+            summary = attendance.process_results(cached_results)
+            for e in summary["new_checkins"]:
+                print(f"  [Check-in] {e['full_name']} (confidence: {e['confidence']:.2f})")
+            for e in summary["new_checkouts"]:
+                print(f"  [Check-out] {e['full_name']} (duration: {e['duration_minutes']:.1f} min)")
+            if summary["overload_alert_triggered"]:
+                print(f"  [!! QUÁ TẢI !!] {summary['headcount']}/{MAX_ROOM_CAPACITY} người")
+            # Push to WebSocket clients
+            if on_status_update:
+                on_status_update(summary)
         results = cached_results
         
         # FPS
@@ -354,13 +454,12 @@ def mode_recognition(pipeline: FaceRecognitionPipeline):
 
 def mode_register(pipeline: FaceRecognitionPipeline, name: str = None):
     """Interactive face registration mode."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap = _open_camera(CAMERA_INDEX)
+    if cap is None:
+        print("ERROR: Cannot open camera (tried indices 0-4 with DSHOW/MSMF/ANY)")
+        return
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-    
-    if not cap.isOpened():
-        print("ERROR: Cannot open camera")
-        return
     
     if not name:
         name = input("Nhap ten nguoi can dang ky: ").strip()
@@ -450,13 +549,12 @@ def mode_list(pipeline: FaceRecognitionPipeline):
 
 def mode_benchmark(pipeline: FaceRecognitionPipeline):
     """Benchmark FPS on camera feed."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap = _open_camera(CAMERA_INDEX)
+    if cap is None:
+        print("ERROR: Cannot open camera (tried indices 0-4 with DSHOW/MSMF/ANY)")
+        return
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-    
-    if not cap.isOpened():
-        print("ERROR: Cannot open camera")
-        return
     
     print(f"\n{'='*50}")
     print("Benchmark - Do toc do xu ly")
@@ -496,20 +594,21 @@ def mode_benchmark(pipeline: FaceRecognitionPipeline):
         avg_faces = np.mean(face_counts)
         
         print(f"\n{'='*50}")
-        print(f"Ket qua Benchmark (CPU - ONNX Runtime)")
+        print(f"Ket qua Benchmark ({pipeline.backend})")
         print(f"{'='*50}")
         print(f"  Inference trung binh : {avg_ms:.1f}ms")
         print(f"  Inference min/max    : {min_ms:.1f}ms / {max_ms:.1f}ms")
         print(f"  FPS trung binh       : {avg_fps:.1f}")
         print(f"  So khuon mat TB      : {avg_faces:.1f}")
         print(f"  Resolution           : {CAMERA_WIDTH}x{CAMERA_HEIGHT}")
-        print(f"  Backend              : CPU (ONNX Runtime)")
+        print(f"  Backend              : {pipeline.backend}")
+        print(f"  Model                : {pipeline.model_name}")
         print(f"{'='*50}")
         
         # Save benchmark result
         benchmark = {
             'timestamp': datetime.now().isoformat(),
-            'backend': 'CPU_ONNX',
+            'backend': pipeline.backend,
             'resolution': f'{CAMERA_WIDTH}x{CAMERA_HEIGHT}',
             'avg_inference_ms': round(avg_ms, 1),
             'avg_fps': round(avg_fps, 1),
@@ -537,8 +636,8 @@ def main():
     parser.add_argument("--delete", type=str, metavar="NAME", help="Xoa khuon mat theo ten")
     parser.add_argument("--list", action="store_true", help="Xem danh sach da dang ky")
     parser.add_argument("--benchmark", action="store_true", help="Do toc do xu ly")
-    parser.add_argument("--model", type=str, default="buffalo_l", 
-                       help="InsightFace model (buffalo_l hoac buffalo_sc)")
+    parser.add_argument("--model", type=str, default=None, 
+                       help="Model/embedding version (auto-selected by backend)")
     parser.add_argument("--threshold", type=float, default=None,
                        help="Nguong nhan dien (0.0-1.0)")
     args = parser.parse_args()
@@ -565,7 +664,11 @@ def main():
     elif args.benchmark:
         mode_benchmark(pipeline)
     else:
-        mode_recognition(pipeline)
+        # Create shared runtime for pipeline + API
+        attendance = AttendanceManager(pipeline.repo)
+        runtime = AppRuntime(repo=pipeline.repo, attendance=attendance)
+        start_api_server(runtime)
+        mode_recognition(pipeline, attendance_manager=attendance, on_status_update=broadcast_status)
 
 
 if __name__ == "__main__":

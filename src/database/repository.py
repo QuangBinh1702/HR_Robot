@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy.orm import Session, selectinload
 
 from config.settings import EMBEDDING_SIZE
-from src.database.models import Member, MemberEmbedding
+from src.database.models import Member, MemberEmbedding, AttendanceLog, SpaceStatus
 
 
 # ========== Serialization Helpers ==========
@@ -197,3 +197,195 @@ class FaceRepository:
         count = q.count()
         q.delete(synchronize_session="fetch")
         return count
+
+    # --- Attendance ---
+
+    def get_open_attendance_log(self, session: Session, member_id: int) -> Optional[AttendanceLog]:
+        """Get open (not checked-out) attendance log for a member."""
+        return session.query(AttendanceLog).filter(
+            AttendanceLog.member_id == member_id,
+            AttendanceLog.check_out_time == None,
+        ).first()
+
+    def list_open_attendance_logs(self, session: Session) -> list[AttendanceLog]:
+        """List all open attendance logs (for startup restore)."""
+        return session.query(AttendanceLog).filter(
+            AttendanceLog.check_out_time == None,
+        ).all()
+
+    def log_checkin(
+        self, session: Session, member_id: int,
+        confidence_score: float,
+        check_in_time: Optional[datetime] = None,
+    ) -> AttendanceLog:
+        """
+        Create a check-in record. Idempotent: returns existing open log if present.
+        """
+        existing = self.get_open_attendance_log(session, member_id)
+        if existing:
+            return existing
+
+        log = AttendanceLog(
+            member_id=member_id,
+            check_in_time=check_in_time or datetime.utcnow(),
+            confidence_score=confidence_score,
+        )
+        session.add(log)
+        session.flush()
+        return log
+
+    def log_checkout(
+        self, session: Session, attendance_log_id: int,
+        check_out_time: Optional[datetime] = None,
+    ) -> Optional[AttendanceLog]:
+        """
+        Close an attendance log. Computes duration_minutes.
+        Returns None if log not found or already closed.
+        """
+        log = session.query(AttendanceLog).filter(
+            AttendanceLog.id == attendance_log_id,
+        ).first()
+
+        if not log or log.check_out_time is not None:
+            return None
+
+        out_time = check_out_time or datetime.utcnow()
+        log.check_out_time = out_time
+        log.duration_minutes = (out_time - log.check_in_time).total_seconds() / 60.0
+        session.flush()
+        return log
+
+    # --- Space Status ---
+
+    def update_headcount(
+        self, session: Session, current_headcount: int,
+        max_capacity: int,
+        timestamp: Optional[datetime] = None,
+    ) -> SpaceStatus:
+        """Insert a new SpaceStatus record (append-only)."""
+        status = SpaceStatus(
+            timestamp=timestamp or datetime.utcnow(),
+            current_headcount=current_headcount,
+            max_capacity=max_capacity,
+            is_overloaded=current_headcount > max_capacity,
+        )
+        session.add(status)
+        session.flush()
+        return status
+
+    def get_latest_space_status(self, session: Session) -> Optional[SpaceStatus]:
+        """Get the most recent space status record."""
+        return session.query(SpaceStatus).order_by(
+            SpaceStatus.timestamp.desc()
+        ).first()
+
+    # --- API Queries ---
+
+    def list_attendance_logs(
+        self, session: Session,
+        start_dt: Optional[datetime] = None,
+        end_dt: Optional[datetime] = None,
+        member_id: Optional[int] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """
+        Query attendance logs with filters. Returns (items, total_count).
+        Each item includes member full_name via join.
+        """
+        q = (
+            session.query(AttendanceLog, Member.full_name)
+            .join(Member, AttendanceLog.member_id == Member.id)
+        )
+        if start_dt:
+            q = q.filter(AttendanceLog.check_in_time >= start_dt)
+        if end_dt:
+            q = q.filter(AttendanceLog.check_in_time < end_dt)
+        if member_id:
+            q = q.filter(AttendanceLog.member_id == member_id)
+
+        total = q.count()
+        rows = q.order_by(AttendanceLog.check_in_time.desc()).offset(offset).limit(limit).all()
+
+        items = []
+        for log, full_name in rows:
+            items.append({
+                "id": log.id,
+                "member_id": log.member_id,
+                "full_name": full_name,
+                "check_in_time": log.check_in_time.isoformat() if log.check_in_time else None,
+                "check_out_time": log.check_out_time.isoformat() if log.check_out_time else None,
+                "duration_minutes": round(log.duration_minutes, 1) if log.duration_minutes else None,
+                "confidence_score": round(log.confidence_score, 2) if log.confidence_score else None,
+                "status": "present" if log.check_out_time is None else "checked_out",
+            })
+        return items, total
+
+    def get_attendance_stats(
+        self, session: Session,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> dict:
+        """
+        Compute attendance KPI stats for a date range.
+        Returns: avg_duration, attendance_rate, peak_hour, daily_attendance, peak_hours
+        """
+        from sqlalchemy import func, extract
+
+        # All logs in range
+        logs = (
+            session.query(AttendanceLog)
+            .filter(AttendanceLog.check_in_time >= start_dt)
+            .filter(AttendanceLog.check_in_time < end_dt)
+            .all()
+        )
+
+        if not logs:
+            return {
+                "avg_duration_minutes": 0,
+                "attendance_rate_pct": 0,
+                "total_checkins": 0,
+                "peak_hour": None,
+                "daily_attendance": [],
+                "peak_hours": [],
+            }
+
+        # Avg duration (only completed sessions)
+        durations = [l.duration_minutes for l in logs if l.duration_minutes is not None]
+        avg_duration = round(sum(durations) / len(durations), 1) if durations else 0
+
+        # Attendance rate
+        unique_members = len(set(l.member_id for l in logs))
+        total_active = session.query(Member).filter(Member.is_active == True).count()
+        rate = round((unique_members / total_active) * 100, 1) if total_active > 0 else 0
+
+        # Peak hours histogram
+        hour_counts: dict[int, int] = {}
+        for l in logs:
+            h = l.check_in_time.hour
+            hour_counts[h] = hour_counts.get(h, 0) + 1
+
+        peak_hours = [{"hour": h, "checkins": c} for h, c in sorted(hour_counts.items())]
+        peak_hour = max(peak_hours, key=lambda x: x["checkins"]) if peak_hours else None
+
+        # Daily attendance (unique members per day)
+        day_members: dict[str, set] = {}
+        for l in logs:
+            day_str = l.check_in_time.strftime("%Y-%m-%d")
+            if day_str not in day_members:
+                day_members[day_str] = set()
+            day_members[day_str].add(l.member_id)
+
+        daily_attendance = [
+            {"date": d, "unique_members": len(members)}
+            for d, members in sorted(day_members.items())
+        ]
+
+        return {
+            "avg_duration_minutes": avg_duration,
+            "attendance_rate_pct": rate,
+            "total_checkins": len(logs),
+            "peak_hour": peak_hour,
+            "daily_attendance": daily_attendance,
+            "peak_hours": peak_hours,
+        }

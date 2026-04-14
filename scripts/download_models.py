@@ -1,11 +1,14 @@
 """
-Model Download Script
-Downloads SCRFD and ArcFace ONNX models using InsightFace library.
+Model Download Script (Edge AI / RK3588S NPU)
+Downloads lightweight SCRFD and ArcFace ONNX models using InsightFace library.
+- buffalo_sc: det_500m.onnx + w600k_mbf.onnx (small & fast)
+- scrfd_2.5g_kps.onnx: standalone lightweight detector with keypoints
 """
 
 import os
 import sys
 import shutil
+import urllib.request
 from pathlib import Path
 
 # Add project root to path
@@ -15,169 +18,223 @@ sys.path.insert(0, str(PROJECT_ROOT))
 MODELS_DIR = PROJECT_ROOT / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Direct URL for SCRFD-2.5G standalone model from InsightFace model zoo
+SCRFD_2_5G_URL = (
+    "https://github.com/deepinsight/insightface/releases/download/"
+    "v0.7/scrfd_2.5g_kps.onnx"
+)
 
-def download_via_insightface():
+
+def download_buffalo_sc():
     """
-    Use InsightFace library to download buffalo_l models automatically.
-    Models include: SCRFD det_10g + ArcFace w600k_r50
+    Use InsightFace library to download buffalo_sc models automatically.
+    buffalo_sc contains: det_500m.onnx + w600k_mbf.onnx (lightweight).
     """
     try:
         from insightface.app import FaceAnalysis
     except ImportError:
-        print("✗ insightface not installed. Run: pip install insightface")
+        print("[X] insightface not installed. Run: pip install insightface")
         return False
-    
-    print("[1/3] Downloading models via InsightFace (buffalo_l)...")
-    print("      This will download to ~/.insightface/models/buffalo_l/\n")
-    
+
+    print("[1/4] Downloading models via InsightFace (buffalo_sc)...")
+    print("      This will download to ~/.insightface/models/buffalo_sc/\n")
+
     try:
-        app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
+        app = FaceAnalysis(name="buffalo_sc", providers=['CPUExecutionProvider'])
         app.prepare(ctx_id=0, det_size=(640, 640))
-        print("  ✓ InsightFace models downloaded successfully!\n")
+        print("  [OK] InsightFace buffalo_sc models downloaded successfully!\n")
     except Exception as e:
-        print(f"  ✗ Failed: {e}")
-        print("  Trying buffalo_sc (smaller) instead...\n")
-        try:
-            app = FaceAnalysis(name="buffalo_sc", providers=['CPUExecutionProvider'])
-            app.prepare(ctx_id=0, det_size=(640, 640))
-            print("  ✓ InsightFace buffalo_sc models downloaded!\n")
-        except Exception as e2:
-            print(f"  ✗ Failed: {e2}")
+        print(f"  [X] Failed to download buffalo_sc: {e}")
+        return False
+
+    return True
+
+
+def download_scrfd_2_5g_standalone():
+    """
+    Try to download the standalone SCRFD-2.5G-KPS model.
+    This is a better lightweight detector than det_500m from buffalo_sc.
+    """
+    print("[2/4] Downloading standalone SCRFD-2.5G-KPS model...")
+
+    dst = MODELS_DIR / "scrfd_2.5g_kps.onnx"
+    if dst.exists():
+        size_mb = dst.stat().st_size / 1024 / 1024
+        print(f"  [OK] Already exists: {dst.name} ({size_mb:.1f} MB)\n")
+        return True
+
+    # Try via insightface model zoo API first
+    try:
+        from insightface.utils import storage
+        model_path = storage.download("models", "scrfd_2.5g_kps.onnx")
+        if model_path and Path(model_path).exists():
+            shutil.copy2(model_path, dst)
+            size_mb = dst.stat().st_size / 1024 / 1024
+            print(f"  [OK] Downloaded via insightface zoo: {dst.name} ({size_mb:.1f} MB)\n")
+            return True
+    except Exception:
+        pass
+
+    # Fallback: direct URL download
+    try:
+        print(f"  Downloading from: {SCRFD_2_5G_URL}")
+        urllib.request.urlretrieve(SCRFD_2_5G_URL, str(dst))
+        if dst.exists() and dst.stat().st_size > 1024:
+            size_mb = dst.stat().st_size / 1024 / 1024
+            print(f"  [OK] Downloaded: {dst.name} ({size_mb:.1f} MB)\n")
+            return True
+        else:
+            dst.unlink(missing_ok=True)
+            print("  [X] Downloaded file too small, removed.\n")
             return False
-    
-    # Find downloaded model files
+    except Exception as e:
+        dst.unlink(missing_ok=True)
+        print(f"  [!] Could not download standalone SCRFD-2.5G: {e}")
+        print("  Will fall back to det_500m.onnx from buffalo_sc.\n")
+        return False
+
+
+def copy_models_to_project():
+    """
+    Copy lightweight models to the project models/ directory.
+    - Recognition: w600k_mbf.onnx -> models/arcface_rec.onnx
+    - Detection: prefer scrfd_2.5g_kps.onnx, fallback det_500m.onnx -> models/scrfd_det.onnx
+    """
+    print("[3/4] Copying models to", MODELS_DIR, "...")
+
     home = Path.home()
     insightface_dir = home / ".insightface" / "models"
-    
-    print("[2/3] Locating downloaded model files...")
-    
-    # Try buffalo_l first, then buffalo_sc
-    model_dir = None
-    for name in ["buffalo_l", "buffalo_sc"]:
-        candidate = insightface_dir / name
-        if candidate.exists():
-            model_dir = candidate
-            print(f"  ✓ Found model dir: {model_dir}")
-            break
-    
-    if model_dir is None:
-        print("  ✗ Cannot find downloaded models")
-        print(f"  Searched in: {insightface_dir}")
+    buffalo_sc_dir = insightface_dir / "buffalo_sc"
+
+    if not buffalo_sc_dir.exists():
+        print(f"  [X] buffalo_sc directory not found: {buffalo_sc_dir}")
         return False
-    
-    # List all .onnx files
-    onnx_files = list(model_dir.glob("*.onnx"))
-    print(f"  ✓ Found {len(onnx_files)} ONNX files:")
+
+    # List all files in buffalo_sc
+    onnx_files = list(buffalo_sc_dir.glob("*.onnx"))
+    print(f"  Found {len(onnx_files)} ONNX files in buffalo_sc:")
     for f in onnx_files:
         size_mb = f.stat().st_size / 1024 / 1024
         print(f"    - {f.name} ({size_mb:.1f} MB)")
-    
-    print(f"\n[3/3] Copying models to {MODELS_DIR}...")
-    
-    # Copy detection model (det_10g.onnx or det_2.5g.onnx)
-    det_copied = False
-    for det_name in ["det_10g.onnx", "det_2.5g.onnx", "det_500m.onnx"]:
-        src = model_dir / det_name
-        if src.exists():
-            dst = MODELS_DIR / "scrfd_det.onnx"
-            shutil.copy2(src, dst)
-            print(f"  ✓ Detection: {det_name} → {dst.name}")
-            det_copied = True
-            break
-    
-    if not det_copied:
-        print("  ⚠ No detection model found, copying first available")
-        det_files = [f for f in onnx_files if "det" in f.name.lower()]
-        if det_files:
-            dst = MODELS_DIR / "scrfd_det.onnx"
-            shutil.copy2(det_files[0], dst)
-            print(f"  ✓ Detection: {det_files[0].name} → {dst.name}")
-            det_copied = True
-    
-    # Copy recognition model (w600k_r50.onnx or w600k_mbf.onnx)
+
+    # Copy recognition model: w600k_mbf.onnx -> arcface_rec.onnx
     rec_copied = False
-    for rec_name in ["w600k_r50.onnx", "w600k_mbf.onnx"]:
-        src = model_dir / rec_name
-        if src.exists():
-            dst = MODELS_DIR / "arcface_rec.onnx"
-            shutil.copy2(src, dst)
-            print(f"  ✓ Recognition: {rec_name} → {dst.name}")
-            rec_copied = True
-            break
-    
-    if not rec_copied:
-        # Try any recognition-looking model  
-        rec_files = [f for f in onnx_files if any(k in f.name.lower() for k in ["w600k", "arcface", "rec"])]
-        if rec_files:
-            dst = MODELS_DIR / "arcface_rec.onnx"
-            shutil.copy2(rec_files[0], dst)
-            print(f"  ✓ Recognition: {rec_files[0].name} → {dst.name}")
-            rec_copied = True
-    
+    rec_src = buffalo_sc_dir / "w600k_mbf.onnx"
+    if rec_src.exists():
+        dst = MODELS_DIR / "arcface_rec.onnx"
+        shutil.copy2(rec_src, dst)
+        size_mb = dst.stat().st_size / 1024 / 1024
+        print(f"  [OK] Recognition: w600k_mbf.onnx -> {dst.name} ({size_mb:.1f} MB)")
+        rec_copied = True
+    else:
+        print("  [X] w600k_mbf.onnx not found in buffalo_sc")
+
+    # Copy detection model: prefer scrfd_2.5g_kps.onnx, fallback to det_500m.onnx
+    det_copied = False
+    scrfd_standalone = MODELS_DIR / "scrfd_2.5g_kps.onnx"
+    det_dst = MODELS_DIR / "scrfd_det.onnx"
+
+    if scrfd_standalone.exists():
+        # Use standalone SCRFD-2.5G (better than det_500m)
+        shutil.copy2(scrfd_standalone, det_dst)
+        size_mb = det_dst.stat().st_size / 1024 / 1024
+        print(f"  [OK] Detection: scrfd_2.5g_kps.onnx -> {det_dst.name} ({size_mb:.1f} MB)")
+        det_copied = True
+    else:
+        # Fallback to det_500m from buffalo_sc
+        det_src = buffalo_sc_dir / "det_500m.onnx"
+        if det_src.exists():
+            shutil.copy2(det_src, det_dst)
+            size_mb = det_dst.stat().st_size / 1024 / 1024
+            print(f"  [OK] Detection: det_500m.onnx -> {det_dst.name} ({size_mb:.1f} MB)")
+            det_copied = True
+        else:
+            print("  [X] No detection model found (neither scrfd_2.5g_kps nor det_500m)")
+
     return det_copied and rec_copied
 
 
 def verify_models():
-    """Verify that models exist and can be loaded."""
+    """Verify that models exist, are lightweight, and can be loaded."""
     print("\n" + "=" * 60)
     print("Verifying models...")
     print("=" * 60)
-    
+
     # Check models directory
     onnx_files = list(MODELS_DIR.glob("*.onnx"))
-    
+
     if not onnx_files:
-        print("✗ No .onnx files found in models/")
+        print("[X] No .onnx files found in models/")
         return False
-    
+
     print(f"\nModels in {MODELS_DIR}:")
+    total_size = 0
     for f in onnx_files:
         size_mb = f.stat().st_size / 1024 / 1024
-        print(f"  ✓ {f.name} ({size_mb:.1f} MB)")
-    
-    # Quick test with InsightFace
-    print("\nQuick inference test...")
+        total_size += size_mb
+        print(f"  [OK] {f.name} ({size_mb:.1f} MB)")
+
+    print(f"\n  Total model size: {total_size:.1f} MB")
+    if total_size < 100:
+        print("  [OK] Lightweight models confirmed (suitable for edge AI / RK3588S NPU)")
+    else:
+        print("  [!] Models may be too large for edge deployment")
+
+    # Quick test with InsightFace using buffalo_sc
+    print("\nQuick inference test (buffalo_sc)...")
     try:
         import numpy as np
         from insightface.app import FaceAnalysis
-        
-        app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
+
+        app = FaceAnalysis(name="buffalo_sc", providers=['CPUExecutionProvider'])
         app.prepare(ctx_id=0, det_size=(640, 640))
-        
+
         # Create dummy image
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
         faces = app.get(dummy)
-        print(f"  ✓ Inference OK (detected {len(faces)} faces on blank image)")
+        print(f"  [OK] Inference OK (detected {len(faces)} faces on blank image)")
     except Exception as e:
-        print(f"  ⚠ Inference test note: {e}")
-    
+        print(f"  [!] Inference test note: {e}")
+
     return True
 
 
 def main():
     print("=" * 60)
-    print("HR Robot - Model Download Script")
+    print("HR Robot - Edge AI Model Download Script")
+    print("Target: RK3588S NPU (lightweight models)")
     print("=" * 60)
     print(f"Model directory: {MODELS_DIR}\n")
-    
+
     # Check if models already exist
     existing = list(MODELS_DIR.glob("*.onnx"))
     if existing:
         print("Existing models found:")
         for f in existing:
-            print(f"  ✓ {f.name} ({f.stat().st_size/1024/1024:.1f} MB)")
+            print(f"  [OK] {f.name} ({f.stat().st_size/1024/1024:.1f} MB)")
         print()
-    
-    # Download via InsightFace
-    success = download_via_insightface()
-    
-    if success:
-        print("\n✅ Models downloaded and copied successfully!")
+
+    # Step 1: Download buffalo_sc via InsightFace
+    buffalo_ok = download_buffalo_sc()
+
+    # Step 2: Try to download standalone SCRFD-2.5G
+    scrfd_ok = download_scrfd_2_5g_standalone()
+
+    # Step 3: Copy models to project directory
+    if buffalo_ok:
+        copy_ok = copy_models_to_project()
     else:
-        print("\n⚠ Auto-download had issues.")
-        print("But InsightFace models should be in ~/.insightface/models/")
+        copy_ok = False
+        print("[3/4] Skipped (buffalo_sc download failed).")
+
+    # Step 4: Verify
+    if copy_ok:
+        print("\n[OK] Lightweight models downloaded and copied successfully!")
+    else:
+        print("\n[!] Auto-download had issues.")
+        print("But InsightFace models should be in ~/.insightface/models/buffalo_sc/")
         print("You can use InsightFace wrapper directly without manual model files.")
-    
+
     verify_models()
     print("\nDone!")
 
