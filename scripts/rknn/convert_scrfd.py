@@ -82,7 +82,11 @@ def convert(quantize: str = "int8"):
     )
 
     print(f"--> Loading ONNX: {onnx_path}")
-    ret = rknn.load_onnx(model=str(onnx_path))
+    ret = rknn.load_onnx(
+        model=str(onnx_path),
+        inputs=['input.1'],
+        input_size_list=[[1, 3, 640, 640]],
+    )
     if ret != 0:
         print("✗ Failed to load ONNX model")
         sys.exit(1)
