@@ -20,6 +20,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.camera_utils import open_camera
+
 from config.settings import (
     SCRFD_RKNN_PATH, DETECTION_THRESHOLD, NMS_THRESHOLD,
     DETECTION_INPUT_SIZE, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
@@ -235,6 +237,9 @@ class SCRFDRKNNDetector:
         Returns:
             List of face dicts with 'bbox', 'score', 'keypoints'
         """
+        if len(image.shape) == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        
         h, w = image.shape[:2]
         input_data, scale = self._preprocess(image)
         
@@ -283,11 +288,8 @@ class SCRFDRKNNDetector:
 
 def run_camera(detector: SCRFDRKNNDetector):
     """Run face detection on live camera feed."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-    
-    if not cap.isOpened():
+    cap = open_camera()
+    if cap is None:
         print("Error: Cannot open camera")
         return
     

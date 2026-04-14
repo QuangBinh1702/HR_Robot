@@ -44,6 +44,7 @@ from src.embedding_cache import EmbeddingCache
 from src.attendance import AttendanceManager
 from src.app_runtime import AppRuntime
 from src.api_server import start_api_server, broadcast_status
+from src.camera_utils import open_camera
 
 
 class FaceRecognitionPipeline:
@@ -311,47 +312,13 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
     return vis
 
 
-def _try_camera(index, backend):
-    """Try opening camera and verify it can actually grab a frame."""
-    cap = cv2.VideoCapture(index, backend)
-    if not cap.isOpened():
-        cap.release()
-        return None
-    # Verify by reading a real frame — isOpened() alone is unreliable on Windows
-    ret, frame = cap.read()
-    if ret and frame is not None:
-        backend_names = {cv2.CAP_DSHOW: "DSHOW", cv2.CAP_MSMF: "MSMF", cv2.CAP_ANY: "ANY"}
-        print(f"Camera verified: index={index}, backend={backend_names.get(backend, backend)}")
-        return cap
-    cap.release()
-    return None
-
-
-def _open_camera(index=CAMERA_INDEX):
-    """Try to open camera at given index, fallback to scanning 0-4 if failed.
-
-    Strategy: try DSHOW first across ALL indices (fastest, most reliable for
-    USB cameras on Windows), then fall back to MSMF/ANY.
-    """
-    indices = [index] + [i for i in range(5) if i != index]
-    for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]:
-        for i in indices:
-            cap = _try_camera(i, backend)
-            if cap is not None:
-                if i != index:
-                    print(f"  (fallback from index {index} to {i})")
-                return cap
-    return None
-
 
 def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None, on_status_update=None):
     """Live face recognition mode."""
-    cap = _open_camera(CAMERA_INDEX)
+    cap = open_camera()
     if cap is None:
-        print("ERROR: Cannot open camera (tried indices 0-4 with DSHOW/MSMF/ANY)")
+        print("ERROR: Cannot open camera")
         return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     
     print(f"\n{'='*50}")
     print("HR Robot - Nhan dien khuon mat")
@@ -454,12 +421,10 @@ def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None,
 
 def mode_register(pipeline: FaceRecognitionPipeline, name: str = None):
     """Interactive face registration mode."""
-    cap = _open_camera(CAMERA_INDEX)
+    cap = open_camera()
     if cap is None:
-        print("ERROR: Cannot open camera (tried indices 0-4 with DSHOW/MSMF/ANY)")
+        print("ERROR: Cannot open camera")
         return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     
     if not name:
         name = input("Nhap ten nguoi can dang ky: ").strip()
@@ -549,12 +514,10 @@ def mode_list(pipeline: FaceRecognitionPipeline):
 
 def mode_benchmark(pipeline: FaceRecognitionPipeline):
     """Benchmark FPS on camera feed."""
-    cap = _open_camera(CAMERA_INDEX)
+    cap = open_camera()
     if cap is None:
-        print("ERROR: Cannot open camera (tried indices 0-4 with DSHOW/MSMF/ANY)")
+        print("ERROR: Cannot open camera")
         return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     
     print(f"\n{'='*50}")
     print("Benchmark - Do toc do xu ly")

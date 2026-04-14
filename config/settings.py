@@ -25,6 +25,9 @@ CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "2"))
 CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
 CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "480"))
 CAMERA_FPS = int(os.getenv("CAMERA_FPS", "30"))
+CAMERA_DEVICE = os.getenv("CAMERA_DEVICE", "").strip()  # e.g. /dev/video2
+CAMERA_BACKEND = os.getenv("CAMERA_BACKEND", "auto").lower()  # auto|v4l2|gstreamer|windows
+CAMERA_PIXEL_FORMAT = os.getenv("CAMERA_PIXEL_FORMAT", "auto").upper()  # auto|MJPG|YUYV
 
 # ========== Face Detection (SCRFD) ==========
 SCRFD_MODEL_PATH = str(MODELS_DIR / "scrfd_det.onnx")

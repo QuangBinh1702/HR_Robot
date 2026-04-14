@@ -22,6 +22,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.camera_utils import open_camera
+
 from config.settings import (
     ARCFACE_RKNN_PATH, RECOGNITION_THRESHOLD, EMBEDDING_SIZE,
     FACE_DB_DIR, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
@@ -258,11 +260,8 @@ class MobileFaceNetRKNNRecognizer:
 
 def run_recognition(detector, recognizer: MobileFaceNetRKNNRecognizer):
     """Run face recognition on live camera feed."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-    
-    if not cap.isOpened():
+    cap = open_camera()
+    if cap is None:
         print("Error: Cannot open camera")
         return
     
