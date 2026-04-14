@@ -263,6 +263,7 @@ def start_api_server(runtime):
     config = uvicorn.Config(
         app, host=API_HOST, port=API_PORT,
         log_level="warning",
+        log_config=None,
     )
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None

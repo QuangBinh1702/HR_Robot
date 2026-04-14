@@ -214,11 +214,16 @@ class SCRFDRKNNDetector:
         if len(faces) == 0:
             return []
         
-        bboxes = np.array([f['bbox'] for f in faces])
         scores = np.array([f['score'] for f in faces])
         
+        # cv2.dnn.NMSBoxes expects [x, y, w, h] format
+        boxes_xywh = []
+        for f in faces:
+            x1, y1, x2, y2 = f['bbox']
+            boxes_xywh.append([x1, y1, x2 - x1, y2 - y1])
+        
         indices = cv2.dnn.NMSBoxes(
-            bboxes.tolist(), scores.tolist(),
+            boxes_xywh, scores.tolist(),
             self.conf_threshold, self.nms_threshold
         )
         
@@ -246,6 +251,17 @@ class SCRFDRKNNDetector:
         # Run inference (thread-safe)
         with self._lock:
             outputs = self.rknn.inference(inputs=[input_data])
+        
+        # Debug: dump raw output stats (remove after confirming detection works)
+        if not hasattr(self, '_debug_printed'):
+            self._debug_printed = True
+            print(f"[SCRFD-RKNN DEBUG] input: shape={input_data.shape}, dtype={input_data.dtype}, "
+                  f"min={input_data.min()}, max={input_data.max()}")
+            print(f"[SCRFD-RKNN DEBUG] num_outputs={len(outputs)}")
+            for i, out in enumerate(outputs):
+                arr = np.asarray(out)
+                print(f"[SCRFD-RKNN DEBUG] out[{i}]: shape={arr.shape}, dtype={arr.dtype}, "
+                      f"min={arr.min():.6f}, max={arr.max():.6f}, mean={arr.mean():.6f}")
         
         # Post-process
         faces = self._postprocess(outputs, scale, h, w)
