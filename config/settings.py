@@ -30,15 +30,37 @@ CAMERA_BACKEND = os.getenv("CAMERA_BACKEND", "auto").lower()  # auto|v4l2|gstrea
 CAMERA_PIXEL_FORMAT = os.getenv("CAMERA_PIXEL_FORMAT", "auto").upper()  # auto|MJPG|YUYV
 
 # ========== Face Detection (SCRFD) ==========
-SCRFD_MODEL_PATH = str(MODELS_DIR / "scrfd_det.onnx")
-SCRFD_RKNN_PATH = str(MODELS_DIR / "scrfd_det.rknn")
-DETECTION_THRESHOLD = float(os.getenv("DETECTION_THRESHOLD", "0.5"))
+# SCRFD_MODEL_PATH = str(MODELS_DIR / "scrfd_det.onnx")
+# SCRFD_RKNN_PATH = str(MODELS_DIR / "scrfd_det.rknn")
+SCRFD_MODEL_PATH = os.getenv("SCRFD_MODEL_PATH", str(MODELS_DIR / "scrfd_det.onnx"))
+SCRFD_RKNN_PATH = os.getenv("SCRFD_RKNN_PATH", str(MODELS_DIR / "scrfd_det.rknn"))
+DETECTION_THRESHOLD = float(os.getenv("DETECTION_THRESHOLD", "0.3"))
 NMS_THRESHOLD = float(os.getenv("NMS_THRESHOLD", "0.4"))
-DETECTION_INPUT_SIZE = (640, 640)  # On NPU with lightweight model, (320, 320) is recommended
+DETECTION_INPUT_SIZE = (320, 320)  # On NPU with lightweight model, (320, 320) is recommended
+
+# ========== Human Detection (YOLOv8n) ==========
+PERSON_DETECT_BACKEND = os.getenv("PERSON_DETECT_BACKEND", "auto").lower()
+YOLOV8N_RKNN_PATH = os.getenv("YOLOV8N_RKNN_PATH", str(MODELS_DIR / "yolov8n.rknn"))
+YOLOV8N_POSE_RKNN_PATH = os.getenv("YOLOV8N_POSE_RKNN_PATH", str(MODELS_DIR / "yolov8n-pose.rknn"))
+YOLOV8N_POSE_ONNX_PATH = os.getenv("YOLOV8N_POSE_ONNX_PATH", str(MODELS_DIR / "yolov8n-pose.onnx"))
+YOLO_PERSON_CONF_THRESHOLD = float(os.getenv("YOLO_PERSON_CONF_THRESHOLD", "0.5"))
+YOLO_PERSON_NMS_THRESHOLD = float(os.getenv("YOLO_PERSON_NMS_THRESHOLD", "0.45"))
+YOLO_PERSON_MIN_BBOX_HEIGHT = int(os.getenv("YOLO_PERSON_MIN_BBOX_HEIGHT", "80"))
+YOLO_POSE_KEYPOINT_THRESHOLD = float(os.getenv("YOLO_POSE_KEYPOINT_THRESHOLD", "0.35"))
+YOLO_INPUT_SIZE = (640, 640)
+USE_PERSON_POSE = os.getenv("USE_PERSON_POSE", "false").lower() == "true"
+PERSON_TRIGGER_CONSECUTIVE_FRAMES = int(os.getenv("PERSON_TRIGGER_CONSECUTIVE_FRAMES", "2"))
+PERSON_TRIGGER_MISS_FRAMES = int(os.getenv("PERSON_TRIGGER_MISS_FRAMES", "2"))
+PERSON_DETECT_INTERVAL = int(os.getenv("PERSON_DETECT_INTERVAL", "1"))
+FACE_DETECT_INTERVAL = int(os.getenv("FACE_DETECT_INTERVAL", "1"))
+USE_PERSON_GATE = os.getenv("USE_PERSON_GATE", "true").lower() == "true"
+PIPELINE_QUEUE_SIZE = int(os.getenv("PIPELINE_QUEUE_SIZE", "3"))
 
 # ========== Face Recognition (ArcFace) ==========
-ARCFACE_MODEL_PATH = str(MODELS_DIR / "arcface_rec.onnx")
-ARCFACE_RKNN_PATH = str(MODELS_DIR / "arcface_rec.rknn")
+# ARCFACE_MODEL_PATH = str(MODELS_DIR / "arcface_rec.onnx")
+# ARCFACE_RKNN_PATH = str(MODELS_DIR / "arcface_rec.rknn")
+ARCFACE_MODEL_PATH = os.getenv("ARCFACE_MODEL_PATH", str(MODELS_DIR / "arcface_rec.onnx"))
+ARCFACE_RKNN_PATH = os.getenv("ARCFACE_RKNN_PATH", str(MODELS_DIR / "arcface_rec.rknn"))
 EMBEDDING_SIZE = 512
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
 # Cosine similarity threshold: > threshold = same person
@@ -80,6 +102,7 @@ NPU_CORE_MASK = int(os.getenv("NPU_CORE_MASK", "1"))
 # 1=core0, 2=core1, 4=core2, 3=core0+1, 7=all cores
 SCRFD_NPU_CORE_MASK = int(os.getenv("SCRFD_NPU_CORE_MASK", "1"))   # core0
 ARCFACE_NPU_CORE_MASK = int(os.getenv("ARCFACE_NPU_CORE_MASK", "2"))  # core1
+YOLO_NPU_CORE_MASK = int(os.getenv("YOLO_NPU_CORE_MASK", "4"))  # core2
 DEFAULT_EMBEDDING_MODEL_NAME = os.getenv(
     "DEFAULT_EMBEDDING_MODEL_NAME",
     "buffalo_sc_rknn_v1" if USE_NPU else "buffalo_l"

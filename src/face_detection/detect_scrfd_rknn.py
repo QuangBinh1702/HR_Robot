@@ -15,6 +15,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -27,6 +28,38 @@ from config.settings import (
     DETECTION_INPUT_SIZE, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
     SCRFD_NPU_CORE_MASK,
 )
+
+
+def _load_font(size: int):
+    """Load a font with broad Unicode coverage."""
+    font_paths = [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    ]
+    for font_path in font_paths:
+        if Path(font_path).exists():
+            try:
+                return ImageFont.truetype(font_path, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+_FONT_LABEL = _load_font(18)
+_FONT_INFO = _load_font(20)
+
+
+def _draw_text_unicode(image: np.ndarray, text: str, pos: tuple[int, int],
+                       color: tuple[int, int, int], font=None) -> np.ndarray:
+    """Draw Unicode text on OpenCV image using PIL."""
+    font = font or _FONT_LABEL
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(rgb)
+    draw = ImageDraw.Draw(pil_img)
+    draw.text(pos, text, font=font, fill=(color[2], color[1], color[0]))
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 class SCRFDRKNNDetector:
@@ -144,10 +177,8 @@ class SCRFDRKNNDetector:
             
             stride = strides[idx]
             
-            # Get score predictions
-            scores = score_blob[0]  # (H*W*anchors,)
-            if len(scores.shape) > 1:
-                scores = scores.flatten()
+            # Get score predictions — RKNN output has no batch dim: (N, 1)
+            scores = score_blob.reshape(-1)  # (H*W*anchors,)
             
             # Filter by confidence threshold
             mask = scores > self.conf_threshold
@@ -155,8 +186,8 @@ class SCRFDRKNNDetector:
                 continue
                 
             filtered_scores = scores[mask]
-            filtered_bboxes = bbox_blob[0][mask]  # (N, 4)
-            filtered_kps = kps_blob[0][mask] if kps_blob is not None else None
+            filtered_bboxes = bbox_blob[mask]  # (N, 4)
+            filtered_kps = kps_blob[mask] if kps_blob is not None else None
             
             # Decode bounding boxes
             input_h, input_w = self.input_size
@@ -281,8 +312,13 @@ class SCRFDRKNNDetector:
             
             # Draw score
             label = f"{score:.2f}"
-            cv2.putText(vis, label, (x1, y1 - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            vis = _draw_text_unicode(
+                vis,
+                label,
+                (x1, max(0, y1 - 24)),
+                (0, 255, 0),
+                _FONT_LABEL,
+            )
             
             # Draw keypoints
             if face.get('keypoints'):
@@ -339,7 +375,7 @@ def run_camera(detector: SCRFDRKNNDetector):
             
             # Info overlay
             info = f"FPS: {fps_display} | Faces: {len(faces)} | Inference: {dt*1000:.1f}ms"
-            cv2.putText(vis, info, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            vis = _draw_text_unicode(vis, info, (10, 10), (0, 0, 255), _FONT_INFO)
             
             cv2.imshow("HR Robot - Face Detection (RKNN)", vis)
             

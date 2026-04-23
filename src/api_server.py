@@ -5,7 +5,6 @@ Runs in a background thread alongside the camera pipeline.
 """
 
 import asyncio
-import json
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -169,6 +168,24 @@ async def get_stats(
     return stats
 
 
+@app.post("/api/attendance/manual-checkin/{member_id}")
+async def manual_checkin(member_id: int):
+    """Manual check-in from touchscreen/admin UI."""
+    result = _runtime.attendance.manual_checkin(member_id)
+    if result.get("success"):
+        broadcast_status(_runtime.attendance.get_status_summary())
+    return result
+
+
+@app.post("/api/attendance/manual-checkout/{member_id}")
+async def manual_checkout(member_id: int):
+    """Manual check-out from touchscreen/admin UI."""
+    result = _runtime.attendance.manual_checkout(member_id)
+    if result.get("success"):
+        broadcast_status(_runtime.attendance.get_status_summary())
+    return result
+
+
 # ========== WebSocket ==========
 
 @app.websocket("/ws/live")
@@ -223,6 +240,9 @@ def broadcast_status(summary: dict):
         "type": "status",
         "timestamp": datetime.utcnow().isoformat(),
         "headcount": summary.get("headcount", 0),
+        "person_count": summary.get("person_count", 0),
+        "person_trigger": summary.get("person_trigger", False),
+        "person_boxes": summary.get("person_boxes", []),
         "known_count": summary.get("known_count", 0),
         "unknown_count": summary.get("unknown_count", 0),
         "is_overloaded": summary.get("is_overloaded", False),

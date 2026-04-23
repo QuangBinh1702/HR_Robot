@@ -19,6 +19,7 @@ env/
 # Models (large files - download via script)
 models/*.onnx
 models/*.rknn
+models/
 
 # Face database legacy files (migrated to SQLite)
 data/face_db/*.npz

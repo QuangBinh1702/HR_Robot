@@ -14,6 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -23,6 +24,39 @@ from config.settings import (
     SCRFD_MODEL_PATH, DETECTION_THRESHOLD, NMS_THRESHOLD,
     DETECTION_INPUT_SIZE, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT
 )
+from src.onnxruntime_cuda import configure_onnxruntime_cuda_dll_paths
+
+
+def _load_font(size: int):
+    """Load a font with broad Unicode coverage."""
+    font_paths = [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    ]
+    for font_path in font_paths:
+        if Path(font_path).exists():
+            try:
+                return ImageFont.truetype(font_path, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+_FONT_LABEL = _load_font(18)
+_FONT_INFO = _load_font(20)
+
+
+def _draw_text_unicode(image: np.ndarray, text: str, pos: tuple[int, int],
+                       color: tuple[int, int, int], font=None) -> np.ndarray:
+    """Draw Unicode text on OpenCV image using PIL."""
+    font = font or _FONT_LABEL
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(rgb)
+    draw = ImageDraw.Draw(pil_img)
+    draw.text(pos, text, font=font, fill=(color[2], color[1], color[0]))
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 class SCRFDDetector:
@@ -49,6 +83,7 @@ class SCRFDDetector:
     def _load_model(self):
         """Load ONNX model with onnxruntime."""
         try:
+            configure_onnxruntime_cuda_dll_paths()
             import onnxruntime as ort
         except ImportError:
             raise ImportError("Please install onnxruntime: pip install onnxruntime")
@@ -60,7 +95,13 @@ class SCRFDDetector:
             )
         
         # Create session with CPU provider
-        providers = ['CPUExecutionProvider']
+        # providers = ['CPUExecutionProvider']
+        available = ort.get_available_providers()
+        if 'CUDAExecutionProvider' in available:
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        else:
+            providers = ['CPUExecutionProvider']
+
         self.session = ort.InferenceSession(self.model_path, providers=providers)
         
         self.input_name = self.session.get_inputs()[0].name
@@ -249,8 +290,13 @@ class SCRFDDetector:
             
             # Draw score
             label = f"{score:.2f}"
-            cv2.putText(vis, label, (x1, y1 - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            vis = _draw_text_unicode(
+                vis,
+                label,
+                (x1, max(0, y1 - 24)),
+                (0, 255, 0),
+                _FONT_LABEL,
+            )
             
             # Draw keypoints
             if face.get('keypoints'):
@@ -302,7 +348,7 @@ def run_camera(detector: SCRFDDetector):
         
         # Info overlay
         info = f"FPS: {fps_display} | Faces: {len(faces)} | Inference: {dt*1000:.1f}ms"
-        cv2.putText(vis, info, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        vis = _draw_text_unicode(vis, info, (10, 10), (0, 0, 255), _FONT_INFO)
         
         cv2.imshow("HR Robot - Face Detection", vis)
         

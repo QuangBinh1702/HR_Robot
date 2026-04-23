@@ -58,6 +58,7 @@ class MobileFaceNetRKNNRecognizer:
         self.model_path = model_path or ARCFACE_RKNN_PATH
         self.threshold = threshold or RECOGNITION_THRESHOLD
         self.core_mask = core_mask or ARCFACE_NPU_CORE_MASK
+        self.model_label = self._infer_model_label(self.model_path)
         
         self.rknn = None
         self._lock = threading.Lock()
@@ -67,6 +68,15 @@ class MobileFaceNetRKNNRecognizer:
         
         self._load_model()
         self._load_face_db()
+
+    @staticmethod
+    def _infer_model_label(model_path: str) -> str:
+        model_name = Path(model_path).name.lower()
+        if "ghost" in model_name:
+            return "GhostFace-RKNN"
+        if "mobile" in model_name or "mbf" in model_name:
+            return "MobileFaceNet-RKNN"
+        return "FaceRec-RKNN"
     
     def _load_model(self):
         """Load RKNN model and init NPU runtime."""
@@ -95,8 +105,8 @@ class MobileFaceNetRKNNRecognizer:
         if ret != 0:
             raise RuntimeError(f"Failed to init RKNN runtime (core_mask={self.core_mask}, ret={ret})")
         
-        print(f"[MobileFaceNet-RKNN] Model loaded: {self.model_path}")
-        print(f"[MobileFaceNet-RKNN] NPU core_mask: {self.core_mask}")
+        print(f"[{self.model_label}] Model loaded: {self.model_path}")
+        print(f"[{self.model_label}] NPU core_mask: {self.core_mask}")
     
     def _load_face_db(self):
         """Load registered face embeddings from disk."""
@@ -105,16 +115,16 @@ class MobileFaceNetRKNNRecognizer:
         if db_path.exists():
             data = np.load(db_path, allow_pickle=True)
             self.face_db = dict(data['database'].item())
-            print(f"[MobileFaceNet-RKNN] Loaded {len(self.face_db)} registered faces")
+            print(f"[{self.model_label}] Loaded {len(self.face_db)} registered faces")
         else:
             self.face_db = {}
-            print("[MobileFaceNet-RKNN] No face database found (empty)")
+            print(f"[{self.model_label}] No face database found (empty)")
     
     def save_face_db(self):
         """Save face database to disk."""
         db_path = FACE_DB_DIR / "face_database.npz"
         np.savez(db_path, database=self.face_db)
-        print(f"[MobileFaceNet-RKNN] Saved {len(self.face_db)} faces to {db_path}")
+        print(f"[{self.model_label}] Saved {len(self.face_db)} faces to {db_path}")
     
     def align_face(self, image: np.ndarray, keypoints: list) -> Optional[np.ndarray]:
         """
@@ -255,7 +265,7 @@ class MobileFaceNetRKNNRecognizer:
         if self.rknn is not None:
             self.rknn.release()
             self.rknn = None
-            print("[MobileFaceNet-RKNN] Released NPU resources")
+            print(f"[{self.model_label}] Released NPU resources")
 
 
 def run_recognition(detector, recognizer: MobileFaceNetRKNNRecognizer):

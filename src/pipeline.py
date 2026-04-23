@@ -36,7 +36,7 @@ from config.settings import (
     RECOGNITION_THRESHOLD, MAX_ROOM_CAPACITY,
     USE_NPU, DEFAULT_EMBEDDING_MODEL_NAME,
     SCRFD_RKNN_PATH, ARCFACE_RKNN_PATH,
-    DETECTION_INPUT_SIZE,
+    DETECTION_INPUT_SIZE, USE_PERSON_GATE, FACE_DETECT_INTERVAL,
 )
 from src.database.models import session_scope
 from src.database.repository import FaceRepository
@@ -45,6 +45,18 @@ from src.attendance import AttendanceManager
 from src.app_runtime import AppRuntime
 from src.api_server import start_api_server, broadcast_status
 from src.camera_utils import open_camera
+from src.pipeline_async import AsyncPersonGatedPipeline, draw_person_boxes
+
+
+def _warn_if_not_project_venv() -> None:
+    """Warn when the script is not running inside the project's virtualenv."""
+    exe_path = Path(sys.executable).resolve()
+    expected_venv = PROJECT_ROOT / "venv"
+    if expected_venv.exists() and expected_venv not in exe_path.parents:
+        print("[Warning] Dang chay bang Python ngoai venv cua project.")
+        print(f"[Warning] Python hien tai : {exe_path}")
+        print(f"[Warning] Nen dung       : {expected_venv / 'Scripts' / 'python.exe'}")
+        print("[Warning] Lenh khuyen dung: venv\\Scripts\\python src/pipeline.py")
 
 
 class FaceRecognitionPipeline:
@@ -107,25 +119,17 @@ class FaceRecognitionPipeline:
             print("Run: pip install insightface onnxruntime")
             sys.exit(1)
         
-        import onnxruntime as ort
-        available = ort.get_available_providers()
-        if 'CUDAExecutionProvider' in available:
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            backend = 'GPU (CUDA)'
-        else:
-            providers = ['CPUExecutionProvider']
-            backend = 'CPU (ONNX Runtime)'
-        
+        backend = "CPU (ONNX Runtime)"
         print(f"[Pipeline] Loading InsightFace model: {model_name} ({backend})")
         self.app = FaceAnalysis(
             name=model_name,
             allowed_modules=['detection', 'recognition'],
-            providers=providers
+            providers=['CPUExecutionProvider']
         )
         self.app.prepare(ctx_id=0, det_size=(320, 320))
         self.backend = backend
         print(f"[Pipeline] Model loaded successfully [{backend}]")
-    
+
     def detect_faces(self, image: np.ndarray) -> list:
         """
         Detect and analyze all faces in an image.
@@ -133,7 +137,10 @@ class FaceRecognitionPipeline:
         Returns list of dicts with:
             bbox, score, embedding, keypoints, name, confidence, member_id
         """
-        faces = self.app.get(image)
+        try:
+            faces = self.app.get(image)
+        except Exception:
+            raise
         results = []
         
         for face in faces:
@@ -247,13 +254,20 @@ _FONT_MEDIUM = _load_font(16)
 _FONT_SMALL = _load_font(14)
 
 
-def put_text_vn(img, text, pos, font=None, color=(255, 255, 255)):
-    """Draw Vietnamese (Unicode) text on an OpenCV image using PIL."""
-    if font is None:
-        font = _FONT_MEDIUM
+
+
+def draw_texts_vn(img, text_items):
+    """Draw multiple Vietnamese texts with a single OpenCV<->PIL conversion."""
+    if not text_items:
+        return img
+
     pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_img)
-    draw.text(pos, text, font=font, fill=(color[2], color[1], color[0]))
+
+    for text, pos, item_font, color in text_items:
+        active_font = item_font or _FONT_MEDIUM
+        draw.text(pos, text, font=active_font, fill=(color[2], color[1], color[0]))
+
     img[:] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     return img
 
@@ -271,6 +285,7 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
     vis = frame.copy()
     headcount = len(results)
     is_overloaded = headcount > headcount_limit
+    text_items = []
     
     for r in results:
         x1, y1, x2, y2 = r['bbox']
@@ -291,7 +306,7 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
         # Label background
         tw, th = get_text_size_vn(label, _FONT_MEDIUM)
         cv2.rectangle(vis, (x1, y1 - th - 12), (x1 + tw + 4, y1), color, -1)
-        put_text_vn(vis, label, (x1 + 2, y1 - th - 10), _FONT_MEDIUM, (255, 255, 255))
+        text_items.append((label, (x1 + 2, y1 - th - 10), _FONT_MEDIUM, (255, 255, 255)))
     
     # Top bar info
     bar_color = (0, 0, 200) if is_overloaded else (50, 50, 50)
@@ -300,26 +315,125 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
     info = f"FPS: {fps} | Số người: {headcount}/{headcount_limit}"
     if is_overloaded:
         info += " | !! QUÁ TẢI !!"
-    
-    put_text_vn(vis, info, (10, 10), _FONT_LARGE, (255, 255, 255))
+
+    text_items.append((info, (10, 10), _FONT_LARGE, (255, 255, 255)))
     
     # Known/Unknown count
     known = sum(1 for r in results if r['name'] != "Người lạ")
     unknown = headcount - known
     status = f"Thành viên: {known} | Người lạ: {unknown}"
-    put_text_vn(vis, status, (10, vis.shape[0] - 25), _FONT_SMALL, (200, 200, 200))
+    text_items.append((status, (10, vis.shape[0] - 25), _FONT_SMALL, (200, 200, 200)))
+
+    draw_texts_vn(vis, text_items)
     
+    return vis
+
+
+def _build_manual_status_summary(attendance: AttendanceManager, results: list, snapshot) -> dict:
+    """Build status payload without automatic attendance transitions."""
+    headcount = len(results)
+    known_count = sum(1 for r in results if r.get("member_id") is not None)
+    unknown_count = headcount - known_count
+    summary = attendance.get_status_summary()
+    summary.update({
+        "headcount": headcount,
+        "known_count": known_count,
+        "unknown_count": unknown_count,
+        "is_overloaded": headcount > MAX_ROOM_CAPACITY,
+        "new_checkins": [],
+        "new_checkouts": [],
+        "overload_alert_triggered": False,
+        "person_trigger": getattr(snapshot, "trigger", False),
+        "person_count": len(getattr(snapshot, "person_boxes", []) or []),
+        "person_boxes": getattr(snapshot, "person_boxes", []) or [],
+    })
+    return summary
+
+
+def _draw_manual_touch_panel(vis: np.ndarray, selected_face: dict | None, attendance: AttendanceManager, ui_state: dict):
+    """Draw fixed check-in/check-out touch controls for OpenCV window."""
+    h, w = vis.shape[:2]
+    panel_h = 132
+    panel_y = h - panel_h
+    cv2.rectangle(vis, (0, panel_y), (w, h), (10, 18, 28), -1)
+    cv2.rectangle(vis, (0, panel_y), (w, h), (56, 72, 92), 1)
+
+    margin = 18
+    gap = 18
+    button_h = 84
+    available_w = w - margin * 2 - gap
+    button_w = max(220, available_w // 2)
+    if button_w * 2 + gap > available_w:
+        button_w = available_w // 2
+    button_y = panel_y + 28
+
+    checkin_rect = (margin, button_y, margin + button_w, button_y + button_h)
+    checkout_rect = (margin + button_w + gap, button_y, margin + button_w * 2 + gap, button_y + button_h)
+    ui_state["checkin_rect"] = checkin_rect
+    ui_state["checkout_rect"] = checkout_rect
+    ui_state["confirm_rect"] = None
+    ui_state["cancel_rect"] = None
+
+    helper_text = ui_state.get("message") or (
+        f"San sang thao tac cho: {selected_face['name']}" if selected_face
+        else "Canh dung 1 thanh vien trong khung hinh de bat nut thao tac"
+    )
+    present_count = attendance.get_status_summary().get("present_count", 0)
+
+    text_items = [
+        ("Che do diem danh thu cong", (18, panel_y + 6), _FONT_MEDIUM, (255, 255, 255)),
+        (f"Dang co mat: {present_count}", (w - 180, panel_y + 6), _FONT_MEDIUM, (120, 255, 190)),
+        (helper_text, (18, panel_y + 105), _FONT_SMALL, (210, 218, 232)),
+    ]
+
+    enabled = selected_face is not None
+    buttons = [
+        ("CHECK IN", checkin_rect, (30, 120, 80), (72, 200, 130), enabled, "Cham de xac nhan"),
+        ("CHECK OUT", checkout_rect, (115, 50, 50), (228, 112, 112), enabled, "Can xac nhan 2 buoc"),
+    ]
+
+    pending_checkout = ui_state.get("pending_checkout")
+    if pending_checkout:
+        confirm_y = panel_y - 76
+        confirm_w = 180
+        confirm_gap = 14
+        confirm_x2 = w - margin
+        cancel_rect = (confirm_x2 - confirm_w * 2 - confirm_gap, confirm_y, confirm_x2 - confirm_w - confirm_gap, confirm_y + 58)
+        confirm_rect = (confirm_x2 - confirm_w, confirm_y, confirm_x2, confirm_y + 58)
+        ui_state["cancel_rect"] = cancel_rect
+        ui_state["confirm_rect"] = confirm_rect
+        cv2.rectangle(vis, (cancel_rect[0], cancel_rect[1]), (cancel_rect[2], cancel_rect[3]), (64, 74, 86), -1)
+        cv2.rectangle(vis, (cancel_rect[0], cancel_rect[1]), (cancel_rect[2], cancel_rect[3]), (210, 216, 224), 2)
+        cv2.rectangle(vis, (confirm_rect[0], confirm_rect[1]), (confirm_rect[2], confirm_rect[3]), (214, 92, 92), -1)
+        cv2.rectangle(vis, (confirm_rect[0], confirm_rect[1]), (confirm_rect[2], confirm_rect[3]), (255, 240, 240), 2)
+        text_items.extend([
+            (f"Xac nhan check-out cho {pending_checkout['name']}?", (18, panel_y - 68), _FONT_MEDIUM, (255, 228, 228)),
+            ("HUY", (cancel_rect[0] + 54, cancel_rect[1] + 15), _FONT_MEDIUM, (255, 255, 255)),
+            ("XAC NHAN", (confirm_rect[0] + 24, confirm_rect[1] + 15), _FONT_MEDIUM, (255, 255, 255)),
+        ])
+
+    for label, rect, deep_color, fill_color, button_enabled, note in buttons:
+        x1, y1, x2, y2 = rect
+        active_fill = fill_color if button_enabled else (70, 78, 88)
+        active_deep = deep_color if button_enabled else (58, 64, 72)
+        border = (255, 255, 255) if button_enabled else (112, 118, 126)
+        cv2.rectangle(vis, (x1, y1), (x2, y2), active_fill, -1)
+        cv2.rectangle(vis, (x1, y1), (x2, y2), border, 2)
+        cv2.rectangle(vis, (x1 + 6, y1 + 6), (x2 - 6, y2 - 6), active_deep, 1)
+        tw, _ = get_text_size_vn(label, _FONT_LARGE)
+        text_items.append((label, (x1 + (x2 - x1 - tw) // 2, y1 + 14), _FONT_LARGE, (255, 255, 255)))
+        if not button_enabled:
+            note = "Can dung 1 thanh vien"
+        nw, _ = get_text_size_vn(note, _FONT_SMALL)
+        text_items.append((note, (x1 + (x2 - x1 - nw) // 2, y1 + 52), _FONT_SMALL, (240, 246, 252)))
+
+    draw_texts_vn(vis, text_items)
     return vis
 
 
 
 def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None, on_status_update=None):
-    """Live face recognition mode."""
-    cap = open_camera()
-    if cap is None:
-        print("ERROR: Cannot open camera")
-        return
-    
+    """Live recognition mode with manual touch-based check-in/check-out."""
     print(f"\n{'='*50}")
     print("HR Robot - Nhan dien khuon mat")
     print(f"{'='*50}")
@@ -327,64 +441,168 @@ def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None,
     print(f"Da dang ky: {len(pipeline.list_faces())} nguoi")
     print(f"Gioi han phong: {MAX_ROOM_CAPACITY} nguoi")
     print(f"Nguong nhan dien: {pipeline.threshold}")
+    print(f"Tan suat detect mat: 1/{max(1, FACE_DETECT_INTERVAL)} frame")
+    print("Diem danh: thu cong bang 2 nut tren man hinh")
     print(f"\nPhim tat:")
     print(f"  R = Dang ky khuon mat moi")
     print(f"  D = Xoa khuon mat da dang ky")
     print(f"  L = Xem danh sach da dang ky")
     print(f"  Q = Thoat")
     print(f"{'='*50}\n")
-    
+
     fps_counter = 0
     fps_time = time.time()
     fps_display = 0
-    frame_count = 0
-    detect_interval = 3  # Chỉ detect mỗi 3 frame (giảm lag)
-    cached_results = []
-    
+
     # Attendance manager (use shared instance if provided)
     attendance = attendance_manager or AttendanceManager(pipeline.repo)
-    
+
+    runner = AsyncPersonGatedPipeline(
+        face_pipeline=pipeline,
+        attendance_manager=None,
+        on_status_update=None,
+    )
+    runner.start()
+
+    last_frame = None
+    last_snapshot_id = -1
+    window_name = "HR Robot - Face Recognition"
+    cv2.namedWindow(window_name)
+    ui_state = {
+        "message": "Canh dung 1 thanh vien da nhan dien vao khung hinh de thao tac",
+        "message_ttl_until": 0.0,
+        "selected_face": None,
+        "results": [],
+        "snapshot": None,
+        "pending_checkout": None,
+    }
+
+    def _set_message(text: str, ttl: float = 2.5):
+        ui_state["message"] = text
+        ui_state["message_ttl_until"] = time.time() + ttl
+
+    def _inside(rect, x, y) -> bool:
+        if rect is None:
+            return False
+        x1, y1, x2, y2 = rect
+        return x1 <= x <= x2 and y1 <= y <= y2
+
+    def _single_known_face(face_results: list) -> dict | None:
+        known_faces = [r for r in face_results if r.get("member_id") is not None]
+        if len(known_faces) != 1:
+            return None
+        return known_faces[0]
+
+    def _mouse_callback(event, x, y, flags, param):
+        if event != cv2.EVENT_LBUTTONUP:
+            return
+
+        selected_face = ui_state.get("selected_face")
+        if _inside(ui_state.get("cancel_rect", (0, 0, -1, -1)), x, y):
+            ui_state["pending_checkout"] = None
+            _set_message("Da huy thao tac check-out")
+            return
+
+        if _inside(ui_state.get("confirm_rect", (0, 0, -1, -1)), x, y):
+            pending = ui_state.get("pending_checkout")
+            if pending is None:
+                return
+            if selected_face is None or selected_face.get("member_id") != pending["member_id"]:
+                ui_state["pending_checkout"] = None
+                _set_message("Nguoi trong khung da thay doi, vui long thao tac lai", ttl=3.0)
+                return
+            result = attendance.manual_checkout(pending["member_id"])
+            ui_state["pending_checkout"] = None
+            _set_message(result["message"], ttl=3.0)
+            if result.get("success") and on_status_update:
+                on_status_update(_build_manual_status_summary(attendance, ui_state["results"], ui_state["snapshot"]))
+            return
+
+        if _inside(ui_state.get("checkin_rect", (0, 0, -1, -1)), x, y):
+            ui_state["pending_checkout"] = None
+            if selected_face is None:
+                _set_message("Check-in yeu cau dung 1 thanh vien hop le trong khung")
+                return
+            result = attendance.manual_checkin(selected_face["member_id"])
+            _set_message(result["message"], ttl=3.0)
+            if result.get("success") and on_status_update:
+                on_status_update(_build_manual_status_summary(attendance, ui_state["results"], ui_state["snapshot"]))
+            return
+
+        if _inside(ui_state.get("checkout_rect", (0, 0, -1, -1)), x, y):
+            if selected_face is None:
+                _set_message("Check-out yeu cau dung 1 thanh vien hop le trong khung")
+                return
+            pending = ui_state.get("pending_checkout")
+            if pending and pending["member_id"] == selected_face["member_id"]:
+                _set_message(f"Dang cho xac nhan check-out cho {selected_face['name']}")
+                return
+            ui_state["pending_checkout"] = {
+                "member_id": selected_face["member_id"],
+                "name": selected_face["name"],
+            }
+            _set_message(f"Cho xac nhan check-out cho {selected_face['name']}", ttl=5.0)
+
+    cv2.setMouseCallback(window_name, _mouse_callback)
+    last_status_push = 0.0
+
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # Detect & recognize (chỉ mỗi N frame, frame còn lại dùng kết quả cũ)
-        frame_count += 1
-        if frame_count % detect_interval == 0:
-            cached_results = pipeline.detect_faces(frame)
-            # Process attendance only on fresh inference
-            summary = attendance.process_results(cached_results)
-            for e in summary["new_checkins"]:
-                print(f"  [Check-in] {e['full_name']} (confidence: {e['confidence']:.2f})")
-            for e in summary["new_checkouts"]:
-                print(f"  [Check-out] {e['full_name']} (duration: {e['duration_minutes']:.1f} min)")
-            if summary["overload_alert_triggered"]:
-                print(f"  [!! QUÁ TẢI !!] {summary['headcount']}/{MAX_ROOM_CAPACITY} người")
-            # Push to WebSocket clients
-            if on_status_update:
-                on_status_update(summary)
-        results = cached_results
-        
+        snapshot = runner.get_latest_snapshot()
+        if snapshot.frame is None:
+            time.sleep(0.005)
+            continue
+        if snapshot.frame_id == last_snapshot_id:
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            time.sleep(0.005)
+            continue
+        last_snapshot_id = snapshot.frame_id
+
+        frame = snapshot.frame
+        results = snapshot.face_results or []
+        last_frame = frame
+        selected_face = _single_known_face(results)
+        ui_state["selected_face"] = selected_face
+        ui_state["results"] = results
+        ui_state["snapshot"] = snapshot
+        pending = ui_state.get("pending_checkout")
+        if pending and (selected_face is None or selected_face.get("member_id") != pending["member_id"]):
+            ui_state["pending_checkout"] = None
+            _set_message("Da huy xac nhan check-out vi khung hinh da thay doi", ttl=3.0)
+        elif ui_state.get("message_ttl_until", 0.0) and time.time() > ui_state["message_ttl_until"]:
+            ui_state["message"] = ""
+            ui_state["message_ttl_until"] = 0.0
+
         # FPS
         fps_counter += 1
         if time.time() - fps_time >= 1.0:
             fps_display = fps_counter
             fps_counter = 0
             fps_time = time.time()
-        
+
         # Draw
         vis = draw_results(frame, results, fps_display, MAX_ROOM_CAPACITY)
-        cv2.imshow("HR Robot - Face Recognition", vis)
-        
+        vis = draw_person_boxes(vis, snapshot.person_boxes or [], snapshot.trigger)
+        if USE_PERSON_GATE:
+            gate_text = f"Gate: {'ON' if snapshot.trigger else 'OFF'} | hit={snapshot.gate_hits} miss={snapshot.gate_misses}"
+            cv2.putText(vis, gate_text, (10, 68), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        vis = _draw_manual_touch_panel(vis, selected_face, attendance, ui_state)
+
+        if on_status_update and (time.time() - last_status_push) >= 0.5:
+            on_status_update(_build_manual_status_summary(attendance, results, snapshot))
+            last_status_push = time.time()
+
+        cv2.imshow(window_name, vis)
+
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
         elif key == ord('r'):
             # Quick register from current frame
             name = input("\nNhap ten nguoi can dang ky: ").strip()
-            if name:
-                result = pipeline.register_face(name, frame)
+            if name and last_frame is not None:
+                result = pipeline.register_face(name, last_frame)
                 print(f"  → {result['message']}")
         elif key == ord('d'):
             faces = pipeline.list_faces()
@@ -415,7 +633,7 @@ def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None,
                 print(f"  - {n}: {info['num_embeddings']} mau, "
                       f"dang ky: {info['registered_at']}")
     
-    cap.release()
+    runner.stop()
     cv2.destroyAllWindows()
 
 
@@ -458,9 +676,10 @@ def mode_register(pipeline: FaceRecognitionPipeline, name: str = None):
         # Info bar
         cv2.rectangle(vis, (0, 0), (vis.shape[1], 45), (50, 50, 50), -1)
         info = f"Đăng ký: {name} | Đã chụp: {capture_count} mẫu | Faces: {len(faces)}"
-        put_text_vn(vis, info, (10, 10), _FONT_LARGE, (0, 255, 255))
-        
-        put_text_vn(vis, "SPACE=Chụp | Q=Xong", (10, vis.shape[0] - 25), _FONT_SMALL, (200, 200, 200))
+        draw_texts_vn(vis, [
+            (info, (10, 10), _FONT_LARGE, (0, 255, 255)),
+            ("SPACE=Chụp | Q=Xong", (10, vis.shape[0] - 25), _FONT_SMALL, (200, 200, 200)),
+        ])
         
         cv2.imshow("HR Robot - Dang ky khuon mat", vis)
         
@@ -593,6 +812,8 @@ def mode_benchmark(pipeline: FaceRecognitionPipeline):
 
 
 def main():
+    _warn_if_not_project_venv()
+
     parser = argparse.ArgumentParser(description="HR Robot - Face Recognition Pipeline")
     parser.add_argument("--register", action="store_true", help="Che do dang ky khuon mat")
     parser.add_argument("--name", type=str, help="Ten nguoi dang ky (dung voi --register)")

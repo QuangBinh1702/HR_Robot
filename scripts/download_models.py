@@ -10,6 +10,7 @@ import sys
 import shutil
 import urllib.request
 from pathlib import Path
+import subprocess
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +24,16 @@ SCRFD_2_5G_URL = (
     "https://github.com/deepinsight/insightface/releases/download/"
     "v0.7/scrfd_2.5g_kps.onnx"
 )
+
+GHOSTFACE_ONNX_URL = (
+    "https://raw.githubusercontent.com/andestech/ModelZoo/master/"
+    "GhostFaceNet/Model/ghostface_fp32.onnx"
+)
+
+YOLOV8N_ONNX_URLS = [
+    "https://huggingface.co/Ultralytics/YOLOv8/resolve/main/yolov8n.onnx",
+    "https://github.com/ultralytics/assets/releases/download/v8.0.0/yolov8n.onnx",
+]
 
 
 def download_buffalo_sc():
@@ -199,6 +210,91 @@ def verify_models():
     return True
 
 
+def download_ghostface_onnx():
+    """Download a GhostFace-compatible ONNX for later RKNN conversion."""
+    print("[4/5] Downloading GhostFace ONNX (optional test model)...")
+
+    ghost_dir = MODELS_DIR / "ghostfacenet"
+    ghost_dir.mkdir(parents=True, exist_ok=True)
+    dst = ghost_dir / "ghostface_rec.onnx"
+
+    if dst.exists() and dst.stat().st_size > 1024:
+        size_mb = dst.stat().st_size / 1024 / 1024
+        print(f"  [OK] Already exists: {dst.name} ({size_mb:.1f} MB)\n")
+        return True
+
+    try:
+        print(f"  Downloading from: {GHOSTFACE_ONNX_URL}")
+        urllib.request.urlretrieve(GHOSTFACE_ONNX_URL, str(dst))
+        if dst.exists() and dst.stat().st_size > 1024:
+            size_mb = dst.stat().st_size / 1024 / 1024
+            print(f"  [OK] Downloaded: {dst.name} ({size_mb:.1f} MB)\n")
+            return True
+        dst.unlink(missing_ok=True)
+        print("  [X] Downloaded file too small, removed.\n")
+        return False
+    except Exception as e:
+        dst.unlink(missing_ok=True)
+        print(f"  [!] Could not download GhostFace ONNX: {e}\n")
+        return False
+
+
+def download_yolov8n_onnx():
+    """Download YOLOv8n ONNX for RKNN conversion."""
+    print("[5/5] Downloading YOLOv8n ONNX (for person detection)...")
+
+    dst = MODELS_DIR / "yolov8n.onnx"
+    if dst.exists() and dst.stat().st_size > 1024:
+        size_mb = dst.stat().st_size / 1024 / 1024
+        print(f"  [OK] Already exists: {dst.name} ({size_mb:.1f} MB)\n")
+        return True
+
+    last_error = None
+    for url in YOLOV8N_ONNX_URLS:
+        try:
+            print(f"  Downloading from: {url}")
+            urllib.request.urlretrieve(url, str(dst))
+            if dst.exists() and dst.stat().st_size > 1024:
+                size_mb = dst.stat().st_size / 1024 / 1024
+                print(f"  [OK] Downloaded: {dst.name} ({size_mb:.1f} MB)\n")
+                return True
+            dst.unlink(missing_ok=True)
+            last_error = RuntimeError("Downloaded file too small")
+        except Exception as e:
+            dst.unlink(missing_ok=True)
+            last_error = e
+
+    print(f"  [!] Could not download YOLOv8n ONNX from all sources: {last_error}")
+
+    # Fallback: export ONNX locally with ultralytics if available
+    print("  Trying local export via ultralytics...")
+    export_cmd = [
+        sys.executable,
+        "-c",
+        (
+            "from ultralytics import YOLO; "
+            "m=YOLO('yolov8n.pt'); "
+            "m.export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)"
+        ),
+    ]
+    try:
+        subprocess.run(export_cmd, check=True)
+        local_onnx = PROJECT_ROOT / "yolov8n.onnx"
+        if local_onnx.exists() and local_onnx.stat().st_size > 1024:
+            shutil.move(str(local_onnx), str(dst))
+            size_mb = dst.stat().st_size / 1024 / 1024
+            print(f"  [OK] Exported locally: {dst.name} ({size_mb:.1f} MB)\n")
+            return True
+    except Exception as e:
+        print(f"  [!] Local export failed: {e}")
+
+    print("  Fallback manual steps:")
+    print("    pip install ultralytics")
+    print("    yolo export model=yolov8n.pt format=onnx imgsz=640 opset=12")
+    print("    move yolov8n.onnx models/yolov8n.onnx\n")
+    return False
+
+
 def main():
     print("=" * 60)
     print("HR Robot - Edge AI Model Download Script")
@@ -227,13 +323,27 @@ def main():
         copy_ok = False
         print("[3/4] Skipped (buffalo_sc download failed).")
 
-    # Step 4: Verify
+    # Step 4: Optional GhostFace ONNX download
+    ghost_ok = download_ghostface_onnx()
+
+    # Step 5: YOLOv8n ONNX for person detector conversion
+    yolo_ok = download_yolov8n_onnx()
+
+    # Step 5: Verify
     if copy_ok:
         print("\n[OK] Lightweight models downloaded and copied successfully!")
     else:
         print("\n[!] Auto-download had issues.")
         print("But InsightFace models should be in ~/.insightface/models/buffalo_sc/")
         print("You can use InsightFace wrapper directly without manual model files.")
+
+    if ghost_ok:
+        print("[OK] GhostFace ONNX ready at models/ghostfacenet/ghostface_rec.onnx")
+        print("     Convert to RKNN with: python scripts/rknn/convert_ghostfacenet.py")
+
+    if yolo_ok:
+        print("[OK] YOLOv8n ONNX ready at models/yolov8n.onnx")
+        print("     Convert to RKNN with: python scripts/rknn/convert_yolov8n.py")
 
     verify_models()
     print("\nDone!")

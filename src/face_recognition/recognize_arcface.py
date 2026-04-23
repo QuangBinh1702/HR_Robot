@@ -26,6 +26,7 @@ from config.settings import (
     FACE_DB_DIR, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT
 )
 from src.face_detection.detect_scrfd import SCRFDDetector
+from src.onnxruntime_cuda import configure_onnxruntime_cuda_dll_paths
 
 
 class ArcFaceRecognizer:
@@ -60,6 +61,7 @@ class ArcFaceRecognizer:
     
     def _load_model(self):
         """Load ArcFace ONNX model."""
+        configure_onnxruntime_cuda_dll_paths()
         import onnxruntime as ort
         
         if not Path(self.model_path).exists():
@@ -68,7 +70,13 @@ class ArcFaceRecognizer:
                 f"Run: python scripts/download_models.py"
             )
         
-        providers = ['CPUExecutionProvider']
+        # providers = ['CPUExecutionProvider']
+        available = ort.get_available_providers()
+        if 'CUDAExecutionProvider' in available:
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        else:
+            providers = ['CPUExecutionProvider']
+
         self.session = ort.InferenceSession(self.model_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
         

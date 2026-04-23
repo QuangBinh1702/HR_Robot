@@ -7,12 +7,16 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Syne:wght@500;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    fontFamily: {
+                        sans: ['IBM Plex Sans', 'sans-serif'],
+                        display: ['Syne', 'sans-serif'],
+                    },
                     colors: {
                         surface: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 700: '#1e293b', 800: '#0f172a', 900: '#020617' },
                         accent: { 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7' },
@@ -25,8 +29,111 @@
         }
     </script>
     <style>
-        body { background: #0f172a; color: #e2e8f0; }
-        .card { background: rgba(30,41,59,.65); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,.12); border-radius: 1rem; }
+        :root {
+            --bg-0: #07111a;
+            --bg-1: #0b1a26;
+            --bg-2: #112838;
+            --line: rgba(148, 197, 255, 0.14);
+            --panel: rgba(8, 23, 35, 0.78);
+            --panel-strong: rgba(10, 29, 43, 0.92);
+            --touch-primary: #ffb703;
+            --touch-primary-deep: #fb8500;
+            --touch-cyan: #50e3c2;
+            --touch-red: #ff6b6b;
+        }
+        body {
+            background:
+                radial-gradient(circle at top left, rgba(80, 227, 194, 0.16), transparent 28%),
+                radial-gradient(circle at top right, rgba(255, 183, 3, 0.12), transparent 30%),
+                linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 42%, var(--bg-2) 100%);
+            color: #e2e8f0;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 32px 32px;
+            mask-image: radial-gradient(circle at center, black 44%, transparent 100%);
+            opacity: .35;
+        }
+        .card {
+            background: var(--panel);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--line);
+            border-radius: 1.25rem;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, .22);
+        }
+        .console-card {
+            background: linear-gradient(180deg, rgba(12, 31, 46, .94), rgba(8, 22, 33, .88));
+            border: 1px solid rgba(255, 183, 3, .18);
+            box-shadow: 0 28px 84px rgba(0,0,0,.28);
+        }
+        .touch-button {
+            min-height: 84px;
+            border-radius: 1.25rem;
+            border: 1px solid rgba(255,255,255,.08);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: .35rem;
+            padding: 1rem 1.1rem;
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+            touch-action: manipulation;
+            user-select: none;
+        }
+        .touch-button:active {
+            transform: scale(.985);
+        }
+        .touch-button-primary {
+            background: linear-gradient(135deg, rgba(255, 183, 3, .18), rgba(251, 133, 0, .18));
+            border-color: rgba(255, 183, 3, .3);
+            box-shadow: 0 18px 46px rgba(251, 133, 0, .12);
+        }
+        .touch-button-secondary {
+            background: linear-gradient(135deg, rgba(80, 227, 194, .12), rgba(27, 154, 170, .14));
+            border-color: rgba(80, 227, 194, .22);
+        }
+        .touch-button-neutral {
+            background: linear-gradient(135deg, rgba(148, 163, 184, .12), rgba(71, 85, 105, .16));
+        }
+        .touch-button-danger {
+            background: linear-gradient(135deg, rgba(255, 107, 107, .16), rgba(190, 24, 93, .18));
+            border-color: rgba(255, 107, 107, .28);
+        }
+        .touch-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 40px rgba(2, 6, 23, .24);
+        }
+        .touch-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .45rem;
+            border-radius: 999px;
+            padding: .5rem .85rem;
+            font-size: .72rem;
+            text-transform: uppercase;
+            letter-spacing: .18em;
+            font-weight: 700;
+            color: rgba(226, 232, 240, .82);
+            background: rgba(148, 163, 184, .08);
+            border: 1px solid rgba(148, 163, 184, .12);
+        }
+        .touch-badge::before {
+            content: "";
+            width: .55rem;
+            height: .55rem;
+            border-radius: 999px;
+            background: var(--touch-cyan);
+            box-shadow: 0 0 18px rgba(80, 227, 194, .62);
+        }
+        .kiosk-title {
+            font-family: 'Syne', sans-serif;
+            letter-spacing: -.04em;
+        }
         .stat-glow-green { box-shadow: 0 0 24px rgba(34,197,94,.12); }
         .stat-glow-blue  { box-shadow: 0 0 24px rgba(14,165,233,.12); }
         .stat-glow-amber { box-shadow: 0 0 24px rgba(245,158,11,.12); }
@@ -43,6 +150,32 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(148,163,184,.2); border-radius: 3px; }
+        .sticky-touch-dock {
+            position: sticky;
+            bottom: 1rem;
+            z-index: 40;
+        }
+        .touch-modal-backdrop {
+            background: rgba(2, 6, 23, .72);
+            backdrop-filter: blur(12px);
+        }
+        .touch-member-item {
+            min-height: 72px;
+            border-radius: 1rem;
+            border: 1px solid rgba(148,163,184,.12);
+            background: rgba(255,255,255,.03);
+        }
+        .touch-member-item:active {
+            transform: scale(.985);
+        }
+        .touch-toast {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 60;
+            min-width: 280px;
+            max-width: min(420px, calc(100vw - 2rem));
+        }
     </style>
 </head>
 <body class="min-h-screen font-sans antialiased">
@@ -79,6 +212,66 @@
             <p class="text-sm text-surface-200/70">Số người vượt quá giới hạn phòng.</p>
         </div>
     </div>
+
+    <section class="card console-card p-5 lg:p-6 overflow-hidden">
+        <div class="grid lg:grid-cols-[1.25fr_.95fr] gap-5 items-stretch">
+            <div class="space-y-5">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="touch-badge">Kiosk cảm ứng</span>
+                    <span class="text-xs uppercase tracking-[0.22em] text-surface-200/45">ưu tiên thao tác nhanh, ít lỗi chạm</span>
+                </div>
+                <div class="space-y-3">
+                    <h2 class="kiosk-title text-4xl lg:text-5xl font-extrabold text-white leading-[.95]">
+                        Trạm điểm danh cho robot
+                    </h2>
+                    <p class="max-w-2xl text-base lg:text-lg text-surface-200/72 leading-relaxed">
+                        Check-in nên để tự động bằng camera. Màn hình cảm ứng chỉ nên giữ các thao tác ngoại lệ:
+                        check-out thủ công, mở chế độ đăng ký và điều hướng nhanh cho quản trị.
+                    </p>
+                </div>
+                <div class="grid sm:grid-cols-3 gap-3">
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                        <p class="text-xs uppercase tracking-[0.22em] text-surface-200/45 mb-2">Chế độ điểm danh</p>
+                        <p id="kiosk-auto-status" class="text-2xl font-bold text-success-400">Tự động</p>
+                        <p class="text-sm text-surface-200/60 mt-1">Camera nhận diện và ghi check-in/check-out</p>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                        <p class="text-xs uppercase tracking-[0.22em] text-surface-200/45 mb-2">Hiện diện</p>
+                        <p class="text-2xl font-bold text-white"><span id="kiosk-present-count">0</span> người</p>
+                        <p class="text-sm text-surface-200/60 mt-1">Danh sách đang có mặt cập nhật trực tiếp</p>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                        <p class="text-xs uppercase tracking-[0.22em] text-surface-200/45 mb-2">Chế độ thao tác</p>
+                        <p class="text-2xl font-bold text-warn-400">Nút lớn</p>
+                        <p class="text-sm text-surface-200/60 mt-1">Phù hợp màn hình cảm ứng, giảm chạm nhầm</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid sm:grid-cols-2 gap-3">
+                <button id="btn-manual-checkin" class="touch-button touch-button-primary text-left">
+                    <span class="text-xs uppercase tracking-[0.22em] text-white/60">Thao tác nhanh</span>
+                    <span class="text-2xl font-bold text-white">Check-in thủ công</span>
+                    <span class="text-sm text-white/70">Dùng khi camera bỏ sót hoặc cần hỗ trợ trực tiếp.</span>
+                </button>
+                <button id="btn-manual-checkout" class="touch-button touch-button-danger text-left">
+                    <span class="text-xs uppercase tracking-[0.22em] text-white/60">Ngoại lệ</span>
+                    <span class="text-2xl font-bold text-white">Check-out thủ công</span>
+                    <span class="text-sm text-white/70">Chỉ dùng khi người dùng rời đi nhưng hệ thống chưa ghi nhận.</span>
+                </button>
+                <button id="btn-register-guide" class="touch-button touch-button-secondary text-left">
+                    <span class="text-xs uppercase tracking-[0.22em] text-white/60">Quản trị</span>
+                    <span class="text-2xl font-bold text-white">Đăng ký thành viên</span>
+                    <span class="text-sm text-white/70">Mở khu vực quản trị và hướng dẫn quy trình đăng ký khuôn mặt.</span>
+                </button>
+                <button id="btn-open-attendance" class="touch-button touch-button-neutral text-left">
+                    <span class="text-xs uppercase tracking-[0.22em] text-white/60">Điều hướng</span>
+                    <span class="text-2xl font-bold text-white">Xem điểm danh</span>
+                    <span class="text-sm text-white/70">Chuyển nhanh tới danh sách check-in/check-out trong ngày.</span>
+                </button>
+            </div>
+        </div>
+    </section>
 
     <!-- Stat Cards -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -142,7 +335,7 @@
     <!-- Bottom Row: Attendance Table + Peak Hours Chart -->
     <div class="grid lg:grid-cols-3 gap-4">
         <!-- Today Attendance Table -->
-        <div class="card p-5 lg:col-span-2 overflow-hidden">
+        <div id="attendance-section" class="card p-5 lg:col-span-2 overflow-hidden">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider">Điểm danh hôm nay</h2>
                 <span id="attendance-count" class="text-xs text-surface-200/40 tabular-nums">0 bản ghi</span>
@@ -174,14 +367,52 @@
     </div>
 
     <!-- Members List -->
-    <div class="card p-5">
+    <div id="members-section" class="card p-5">
         <h2 class="text-sm font-semibold text-surface-200/70 uppercase tracking-wider mb-4">Thành viên đã đăng ký</h2>
         <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" id="members-grid">
             <p class="text-sm text-surface-200/30 italic col-span-full">Đang tải...</p>
         </div>
     </div>
 
+    <div class="sticky-touch-dock">
+        <div class="card px-3 py-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+            <button id="dock-refresh" class="touch-button touch-button-neutral text-left min-h-[72px]">
+                <span class="text-xs uppercase tracking-[0.22em] text-white/55">Dock</span>
+                <span class="text-lg font-semibold text-white">Làm mới</span>
+            </button>
+            <button id="dock-present" class="touch-button touch-button-secondary text-left min-h-[72px]">
+                <span class="text-xs uppercase tracking-[0.22em] text-white/55">Dock</span>
+                <span class="text-lg font-semibold text-white">Đang có mặt</span>
+            </button>
+            <button id="dock-members" class="touch-button touch-button-neutral text-left min-h-[72px]">
+                <span class="text-xs uppercase tracking-[0.22em] text-white/55">Dock</span>
+                <span class="text-lg font-semibold text-white">Thành viên</span>
+            </button>
+            <button id="dock-fullscreen" class="touch-button touch-button-primary text-left min-h-[72px]">
+                <span class="text-xs uppercase tracking-[0.22em] text-white/55">Dock</span>
+                <span class="text-lg font-semibold text-white">Toàn màn hình</span>
+            </button>
+        </div>
+    </div>
+
 </main>
+
+<div id="touch-modal" class="hidden fixed inset-0 z-50 touch-modal-backdrop px-4 py-6">
+    <div class="max-w-3xl mx-auto card console-card h-full max-h-[calc(100vh-3rem)] flex flex-col">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
+            <div>
+                <p id="touch-modal-tag" class="text-xs uppercase tracking-[0.24em] text-surface-200/45">Hỗ trợ</p>
+                <h3 id="touch-modal-title" class="kiosk-title text-2xl font-bold text-white">Thao tác cảm ứng</h3>
+            </div>
+            <button id="touch-modal-close" class="touch-button touch-button-neutral min-h-0 !py-2 !px-4">
+                <span class="text-sm font-semibold text-white">Đóng</span>
+            </button>
+        </div>
+        <div id="touch-modal-body" class="flex-1 overflow-y-auto px-5 py-5 space-y-4"></div>
+    </div>
+</div>
+
+<div id="touch-toast" class="hidden touch-toast"></div>
 
 <script>
 // ========== Config ==========
@@ -193,6 +424,9 @@ let wsConn = null;
 let chartDaily = null;
 let chartPeak = null;
 let reconnectTimer = null;
+let memberCache = [];
+let statusCache = null;
+let modalAction = null;
 
 // ========== DOM Helpers ==========
 const $ = id => document.getElementById(id);
@@ -230,14 +464,103 @@ async function fetchJSON(url) {
     }
 }
 
+async function postJSON(url) {
+    try {
+        const r = await fetch(url, { method: 'POST' });
+        return await r.json();
+    } catch (e) {
+        console.warn('Post error:', url, e);
+        return { success: false, message: 'Không gửi được yêu cầu tới robot' };
+    }
+}
+
+function showToast(message, tone = 'neutral') {
+    const toast = $('touch-toast');
+    const toneMap = {
+        success: 'border-success-500/35 bg-success-500/12 text-success-300',
+        danger: 'border-danger-500/35 bg-danger-500/12 text-danger-300',
+        warn: 'border-warn-500/35 bg-warn-500/12 text-warn-200',
+        neutral: 'border-white/10 bg-surface-200/10 text-surface-100',
+    };
+    toast.className = `touch-toast card px-4 py-3 ${toneMap[tone] || toneMap.neutral}`;
+    toast.textContent = message;
+    toast.classList.remove('hidden');
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => toast.classList.add('hidden'), 2600);
+}
+
+function openTouchModal({ tag, title, bodyHTML, action = null }) {
+    $('touch-modal-tag').textContent = tag;
+    $('touch-modal-title').textContent = title;
+    $('touch-modal-body').innerHTML = bodyHTML;
+    modalAction = action;
+    $('touch-modal').classList.remove('hidden');
+}
+
+function closeTouchModal() {
+    $('touch-modal').classList.add('hidden');
+    $('touch-modal-body').innerHTML = '';
+    modalAction = null;
+}
+
+function scrollToSection(id) {
+    $(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderMemberPicker(mode) {
+    const presentMemberIds = new Set((statusCache?.present_members || []).map(m => m.member_id));
+    const source = mode === 'checkout'
+        ? memberCache.filter(m => presentMemberIds.has(m.member_id))
+        : memberCache;
+
+    if (source.length === 0) {
+        return `
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5 text-surface-200/65">
+                ${mode === 'checkout' ? 'Hiện chưa có ai ở trạng thái có mặt để check-out thủ công.' : 'Chưa có thành viên nào để thao tác.'}
+            </div>
+        `;
+    }
+
+    return `
+        <div class="space-y-3">
+            <p class="text-sm text-surface-200/65">
+                ${mode === 'checkin'
+                    ? 'Dùng khi camera chưa nhận diện được nhưng người dùng đã có mặt.'
+                    : 'Dùng khi người dùng đã rời đi nhưng hệ thống chưa tự check-out.'}
+            </p>
+            <div class="grid md:grid-cols-2 gap-3">
+                ${source.map(item => `
+                    <button class="touch-member-item w-full text-left px-4 py-3 transition-colors duration-150 hover:bg-white/5"
+                            data-member-action="${mode}"
+                            data-member-id="${item.member_id}"
+                            data-member-name="${item.full_name}">
+                        <div class="flex items-center gap-3">
+                            <div class="w-11 h-11 rounded-2xl bg-white/10 flex items-center justify-center font-semibold text-white">
+                                ${item.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-base font-semibold text-white truncate">${item.full_name}</p>
+                                <p class="text-sm text-surface-200/55">${item.num_embeddings} mẫu khuôn mặt</p>
+                            </div>
+                        </div>
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
 // ========== Update Functions ==========
 
 function updateStatus(data) {
+    statusCache = data;
     // Headcount
     $('val-headcount').textContent = data.headcount ?? 0;
     $('val-capacity').textContent = `/ ${data.max_capacity ?? 20}`;
     $('val-present').textContent = data.present_count ?? 0;
     $('val-unknown').textContent = data.unknown_count ?? 0;
+    $('kiosk-present-count').textContent = data.present_count ?? 0;
+    $('kiosk-auto-status').textContent = data.person_trigger ? 'Đang theo dõi' : 'Chờ người vào khung';
 
     // Overload
     const banner = $('overload-banner');
@@ -304,6 +627,7 @@ function updateAttendanceTable(data) {
 function updateMembers(data) {
     const grid = $('members-grid');
     const items = data?.items || [];
+    memberCache = items;
     $('val-registered').textContent = data?.total ?? 0;
 
     if (items.length === 0) {
@@ -322,6 +646,106 @@ function updateMembers(data) {
             </div>
         </div>
     `).join('');
+}
+
+async function refreshAllData() {
+    const [status, members, attendance, stats] = await Promise.all([
+        fetchJSON(`${API}/api/status`),
+        fetchJSON(`${API}/api/members`),
+        fetchJSON(`${API}/api/attendance/today`),
+        fetchJSON(`${API}/api/stats`),
+    ]);
+    if (status) updateStatus(status);
+    if (members) updateMembers(members);
+    if (attendance) updateAttendanceTable(attendance);
+    if (stats) updateStats(stats);
+}
+
+function bindTouchActions() {
+    $('touch-modal-close').addEventListener('click', closeTouchModal);
+    $('touch-modal').addEventListener('click', (e) => {
+        if (e.target === $('touch-modal')) closeTouchModal();
+    });
+
+    $('btn-manual-checkin').addEventListener('click', () => {
+        openTouchModal({
+            tag: 'Check-in thủ công',
+            title: 'Chọn thành viên để check-in',
+            bodyHTML: renderMemberPicker('checkin'),
+        });
+    });
+
+    $('btn-manual-checkout').addEventListener('click', () => {
+        openTouchModal({
+            tag: 'Check-out thủ công',
+            title: 'Chọn thành viên để check-out',
+            bodyHTML: renderMemberPicker('checkout'),
+        });
+    });
+
+    $('btn-register-guide').addEventListener('click', () => {
+        scrollToSection('members-section');
+        openTouchModal({
+            tag: 'Đăng ký thành viên',
+            title: 'Quy trình đăng ký cảm ứng',
+            bodyHTML: `
+                <div class="space-y-4 text-surface-100/80">
+                    <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                        <p class="font-semibold text-white mb-2">Best practice cho robot điểm danh</p>
+                        <p class="text-sm leading-7">
+                            Đăng ký khuôn mặt không nên là nút một chạm ngoài màn hình chính. Hợp lý hơn là đặt nó trong khu vực quản trị,
+                            có người hướng dẫn đứng cạnh và yêu cầu người dùng nhìn vào camera trong vài góc khác nhau.
+                        </p>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                        <p class="font-semibold text-white mb-2">Hiện trạng hệ thống</p>
+                        <p class="text-sm leading-7">
+                            Backend web hiện chưa có API đăng ký khuôn mặt trực tiếp từ giao diện cảm ứng. Luồng đăng ký hiện vẫn nên thực hiện
+                            qua chế độ camera đăng ký để bảo đảm lấy đủ frame và embedding.
+                        </p>
+                    </div>
+                </div>
+            `,
+        });
+    });
+
+    $('btn-open-attendance').addEventListener('click', () => scrollToSection('attendance-section'));
+    $('dock-present').addEventListener('click', () => scrollToSection('present-list'));
+    $('dock-members').addEventListener('click', () => scrollToSection('members-section'));
+    $('dock-refresh').addEventListener('click', async () => {
+        await refreshAllData();
+        showToast('Đã làm mới dữ liệu', 'success');
+    });
+
+    const fullscreenHandler = async () => {
+        if (!document.fullscreenElement) {
+            await document.documentElement.requestFullscreen();
+        } else {
+            await document.exitFullscreen();
+        }
+    };
+    $('dock-fullscreen').addEventListener('click', fullscreenHandler);
+
+    $('touch-modal-body').addEventListener('click', async (e) => {
+        const button = e.target.closest('[data-member-action]');
+        if (!button) return;
+
+        const action = button.dataset.memberAction;
+        const memberId = button.dataset.memberId;
+        const memberName = button.dataset.memberName;
+        const endpoint = action === 'checkin'
+            ? `${API}/api/attendance/manual-checkin/${memberId}`
+            : `${API}/api/attendance/manual-checkout/${memberId}`;
+
+        const result = await postJSON(endpoint);
+        if (result?.success) {
+            closeTouchModal();
+            await refreshAllData();
+            showToast(result.message || `${memberName} đã được cập nhật`, 'success');
+        } else {
+            showToast(result?.message || `Không thể xử lý cho ${memberName}`, 'danger');
+        }
+    });
 }
 
 function updateStats(data) {
@@ -457,18 +881,8 @@ setInterval(() => {
 // ========== Init ==========
 
 async function init() {
-    // Fetch all data in parallel
-    const [status, members, attendance, stats] = await Promise.all([
-        fetchJSON(`${API}/api/status`),
-        fetchJSON(`${API}/api/members`),
-        fetchJSON(`${API}/api/attendance/today`),
-        fetchJSON(`${API}/api/stats`),
-    ]);
-
-    if (status) updateStatus(status);
-    if (members) updateMembers(members);
-    if (attendance) updateAttendanceTable(attendance);
-    if (stats) updateStats(stats);
+    await refreshAllData();
+    bindTouchActions();
 
     // Connect WebSocket for real-time updates
     connectWS();

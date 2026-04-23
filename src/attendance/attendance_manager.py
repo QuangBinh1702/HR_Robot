@@ -323,6 +323,56 @@ class AttendanceManager:
             print(f"[Attendance] Check-out error for {state['full_name']}: {e}")
             return None
 
+    def manual_checkin(self, member_id: int, confidence: float = 1.0, now: datetime = None) -> dict:
+        """Force a manual check-in from touchscreen/admin UI."""
+        with self._lock:
+            now = now or datetime.utcnow()
+            with session_scope() as session:
+                member = self.repo.get_member_by_id(session, member_id)
+                if member is None:
+                    return {"success": False, "message": "Không tìm thấy thành viên"}
+
+            state = self._get_or_init_state(member_id, member.full_name)
+            if state["status"] == STATE_PRESENT:
+                return {"success": False, "message": f"{member.full_name} đang ở trạng thái có mặt"}
+
+            state["status"] = STATE_PRESENT
+            state["candidate_hits"] = self.min_hits
+            state["candidate_first_seen_at"] = now
+            state["last_seen_at"] = now
+            state["last_confidence"] = confidence
+
+            event = self._do_checkin(member_id, confidence, now)
+            if event is None:
+                state["status"] = STATE_ABSENT
+                state["candidate_hits"] = 0
+                state["candidate_first_seen_at"] = None
+                return {"success": False, "message": f"Check-in thủ công thất bại cho {member.full_name}"}
+
+            return {
+                "success": True,
+                "message": f"Đã check-in thủ công cho {member.full_name}",
+                "event": event,
+            }
+
+    def manual_checkout(self, member_id: int, now: datetime = None) -> dict:
+        """Force a manual check-out from touchscreen/admin UI."""
+        with self._lock:
+            now = now or datetime.utcnow()
+            state = self.member_states.get(member_id)
+            if state is None or state["status"] != STATE_PRESENT:
+                return {"success": False, "message": "Thành viên này hiện không ở trạng thái có mặt"}
+
+            event = self._do_checkout(member_id, now)
+            if event is None:
+                return {"success": False, "message": f"Check-out thủ công thất bại cho {state['full_name']}"}
+
+            return {
+                "success": True,
+                "message": f"Đã check-out thủ công cho {state['full_name']}",
+                "event": event,
+            }
+
     def _persist_headcount(self, headcount: int, is_overloaded: bool, now: datetime):
         """Write SpaceStatus to DB (throttled: on change or heartbeat interval)."""
         should_write = False

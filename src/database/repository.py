@@ -44,6 +44,13 @@ class FaceRepository:
 
     # --- Member ---
 
+    def get_member_by_id(self, session: Session, member_id: int) -> Optional[Member]:
+        """Find member by id."""
+        return session.query(Member).filter(
+            Member.id == member_id,
+            Member.is_active == True,
+        ).first()
+
     def get_member_by_name(self, session: Session, full_name: str) -> Optional[Member]:
         """Find member by exact name."""
         return session.query(Member).filter(
