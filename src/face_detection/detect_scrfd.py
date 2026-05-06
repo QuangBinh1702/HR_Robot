@@ -167,16 +167,22 @@ class SCRFDDetector:
         has_kps = len(outputs) == 9  # 3 strides × (score + bbox + kps)
         
         for idx in range(fmc):
-            score_blob = outputs[idx]
-            bbox_blob = outputs[idx + fmc]
-            kps_blob = outputs[idx + fmc * 2] if has_kps else None
+            score_blob = np.asarray(outputs[idx])
+            bbox_blob = np.asarray(outputs[idx + fmc])
+            kps_blob = np.asarray(outputs[idx + fmc * 2]) if has_kps else None
             
             stride = strides[idx]
             
+            # Support both ORT layouts: (1, N, C) and (N, C)
+            if score_blob.ndim == 3 and score_blob.shape[0] == 1:
+                score_blob = score_blob[0]
+            if bbox_blob.ndim == 3 and bbox_blob.shape[0] == 1:
+                bbox_blob = bbox_blob[0]
+            if kps_blob is not None and kps_blob.ndim == 3 and kps_blob.shape[0] == 1:
+                kps_blob = kps_blob[0]
+
             # Get score predictions
-            scores = score_blob[0]  # (H*W*anchors,)
-            if len(scores.shape) > 1:
-                scores = scores.flatten()
+            scores = score_blob.reshape(-1)
             
             # Filter by confidence threshold
             mask = scores > self.conf_threshold
@@ -184,8 +190,8 @@ class SCRFDDetector:
                 continue
                 
             filtered_scores = scores[mask]
-            filtered_bboxes = bbox_blob[0][mask]  # (N, 4)
-            filtered_kps = kps_blob[0][mask] if kps_blob is not None else None
+            filtered_bboxes = bbox_blob[mask]  # (N, 4)
+            filtered_kps = kps_blob[mask] if kps_blob is not None else None
             
             # Decode bounding boxes
             input_h, input_w = self.input_size
@@ -245,9 +251,12 @@ class SCRFDDetector:
         
         bboxes = np.array([f['bbox'] for f in faces])
         scores = np.array([f['score'] for f in faces])
+        boxes_xywh = []
+        for x1, y1, x2, y2 in bboxes:
+            boxes_xywh.append([x1, y1, x2 - x1, y2 - y1])
         
         indices = cv2.dnn.NMSBoxes(
-            bboxes.tolist(), scores.tolist(),
+            boxes_xywh, scores.tolist(),
             self.conf_threshold, self.nms_threshold
         )
         

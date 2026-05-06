@@ -18,17 +18,23 @@ from src.database.models import Member, MemberEmbedding, AttendanceLog, SpaceSta
 def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     """L2 normalize embedding vector."""
     vec = embedding.astype(np.float32).flatten()
+    if not np.all(np.isfinite(vec)):
+        raise ValueError("Embedding contains NaN or infinite values")
+
     norm = np.linalg.norm(vec)
-    if norm > 0:
-        vec = vec / norm
+    if norm <= 0:
+        raise ValueError("Embedding norm must be positive")
+
+    vec = vec / norm
     return vec
 
 
 def serialize_embedding(embedding: np.ndarray) -> bytes:
     """Convert numpy embedding → bytes for DB storage."""
-    vec = normalize_embedding(embedding)
+    vec = embedding.astype(np.float32).flatten()
     if vec.shape[0] != EMBEDDING_SIZE:
         raise ValueError(f"Expected {EMBEDDING_SIZE}-d embedding, got {vec.shape[0]}-d")
+    vec = normalize_embedding(vec)
     return vec.tobytes()
 
 

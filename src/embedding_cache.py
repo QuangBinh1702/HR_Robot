@@ -43,12 +43,28 @@ class EmbeddingCache:
             self._clear()
             return 0
 
-        self.matrix = np.vstack([r["embedding"] for r in rows]).astype(np.float32)
-        self.member_ids = np.array([r["member_id"] for r in rows], dtype=np.int32)
-        self.member_names = [r["full_name"] for r in rows]
-        self.embedding_ids = np.array([r["embedding_id"] for r in rows], dtype=np.int32)
+        valid_rows = []
+        for row in rows:
+            try:
+                embedding = normalize_embedding(row["embedding"])
+            except ValueError as exc:
+                print(
+                    f"[EmbeddingCache] Skipping invalid embedding "
+                    f"id={row['embedding_id']} member_id={row['member_id']}: {exc}"
+                )
+                continue
+            valid_rows.append({**row, "embedding": embedding})
 
-        return len(rows)
+        if not valid_rows:
+            self._clear()
+            return 0
+
+        self.matrix = np.vstack([r["embedding"] for r in valid_rows]).astype(np.float32)
+        self.member_ids = np.array([r["member_id"] for r in valid_rows], dtype=np.int32)
+        self.member_names = [r["full_name"] for r in valid_rows]
+        self.embedding_ids = np.array([r["embedding_id"] for r in valid_rows], dtype=np.int32)
+
+        return len(valid_rows)
 
     @property
     def is_empty(self) -> bool:
@@ -69,8 +85,14 @@ class EmbeddingCache:
         if self.is_empty:
             return ("Người lạ", 0.0, None)
 
-        query = normalize_embedding(query_embedding)
+        try:
+            query = normalize_embedding(query_embedding)
+        except ValueError:
+            return ("Người lạ", 0.0, None)
+
         scores = self.matrix @ query
+        if not np.all(np.isfinite(scores)):
+            return ("Người lạ", 0.0, None)
 
         best_idx = int(np.argmax(scores))
         best_score = float(scores[best_idx])

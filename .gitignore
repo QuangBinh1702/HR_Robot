@@ -30,6 +30,7 @@ data/face_db/backup_before_migration/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/calibration/
 
 # IDE
 .vscode/
@@ -49,3 +50,8 @@ data/calibration/*.jpg
 data/calibration/*.png
 
 /docs
+
+.agents
+.codex
+
+tests

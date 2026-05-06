@@ -30,6 +30,11 @@ GHOSTFACE_ONNX_URL = (
     "GhostFaceNet/Model/ghostface_fp32.onnx"
 )
 
+ANTI_SPOOF_ONNX_URL = (
+    "https://github.com/facenox/face-antispoof-onnx/releases/download/"
+    "v1.0.0/best_model.onnx"
+)
+
 YOLOV8N_ONNX_URLS = [
     "https://huggingface.co/Ultralytics/YOLOv8/resolve/main/yolov8n.onnx",
     "https://github.com/ultralytics/assets/releases/download/v8.0.0/yolov8n.onnx",
@@ -239,9 +244,35 @@ def download_ghostface_onnx():
         return False
 
 
+def download_anti_spoof_onnx():
+    """Download the reference 2-class anti-spoof ONNX model."""
+    print("[5/6] Downloading anti-spoof ONNX (Windows/RK3588 parity model)...")
+
+    dst = MODELS_DIR / "anti_spoof.onnx"
+    if dst.exists() and dst.stat().st_size > 1024:
+        size_mb = dst.stat().st_size / 1024 / 1024
+        print(f"  [OK] Already exists: {dst.name} ({size_mb:.1f} MB)\n")
+        return True
+
+    try:
+        print(f"  Downloading from: {ANTI_SPOOF_ONNX_URL}")
+        urllib.request.urlretrieve(ANTI_SPOOF_ONNX_URL, str(dst))
+        if dst.exists() and dst.stat().st_size > 1024:
+            size_mb = dst.stat().st_size / 1024 / 1024
+            print(f"  [OK] Downloaded: {dst.name} ({size_mb:.1f} MB)\n")
+            return True
+        dst.unlink(missing_ok=True)
+        print("  [X] Downloaded file too small, removed.\n")
+        return False
+    except Exception as e:
+        dst.unlink(missing_ok=True)
+        print(f"  [!] Could not download anti-spoof ONNX: {e}\n")
+        return False
+
+
 def download_yolov8n_onnx():
     """Download YOLOv8n ONNX for RKNN conversion."""
-    print("[5/5] Downloading YOLOv8n ONNX (for person detection)...")
+    print("[6/6] Downloading YOLOv8n ONNX (for person detection)...")
 
     dst = MODELS_DIR / "yolov8n.onnx"
     if dst.exists() and dst.stat().st_size > 1024:
@@ -326,7 +357,9 @@ def main():
     # Step 4: Optional GhostFace ONNX download
     ghost_ok = download_ghostface_onnx()
 
-    # Step 5: YOLOv8n ONNX for person detector conversion
+    anti_spoof_ok = download_anti_spoof_onnx()
+
+    # Step 6: YOLOv8n ONNX for person detector conversion
     yolo_ok = download_yolov8n_onnx()
 
     # Step 5: Verify
@@ -340,6 +373,10 @@ def main():
     if ghost_ok:
         print("[OK] GhostFace ONNX ready at models/ghostfacenet/ghostface_rec.onnx")
         print("     Convert to RKNN with: python scripts/rknn/convert_ghostfacenet.py")
+
+    if anti_spoof_ok:
+        print("[OK] Anti-spoof ONNX ready at models/anti_spoof.onnx")
+        print("     Convert to RKNN with: python scripts/rknn/convert_minifasnet.py")
 
     if yolo_ok:
         print("[OK] YOLOv8n ONNX ready at models/yolov8n.onnx")

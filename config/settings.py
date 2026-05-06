@@ -61,9 +61,31 @@ PIPELINE_QUEUE_SIZE = int(os.getenv("PIPELINE_QUEUE_SIZE", "3"))
 # ARCFACE_RKNN_PATH = str(MODELS_DIR / "arcface_rec.rknn")
 ARCFACE_MODEL_PATH = os.getenv("ARCFACE_MODEL_PATH", str(MODELS_DIR / "arcface_rec.onnx"))
 ARCFACE_RKNN_PATH = os.getenv("ARCFACE_RKNN_PATH", str(MODELS_DIR / "arcface_rec.rknn"))
+GHOSTFACENET_MODEL_PATH = os.getenv(
+    "GHOSTFACENET_MODEL_PATH",
+    str(MODELS_DIR / "ghostface_rec.onnx"),
+)
+GHOSTFACENET_RKNN_PATH = os.getenv(
+    "GHOSTFACENET_RKNN_PATH",
+    str(MODELS_DIR / "ghostface_rec.rknn"),
+)
 EMBEDDING_SIZE = 512
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
 # Cosine similarity threshold: > threshold = same person
+
+# ========== Face Liveness ==========
+LIVENESS_RKNN_PATH = os.getenv(
+    "LIVENESS_RKNN_PATH",
+    str(MODELS_DIR / "anti_spoof.rknn"),
+)
+LIVENESS_ONNX_PATH = os.getenv(
+    "LIVENESS_ONNX_PATH",
+    str(MODELS_DIR / "anti_spoof.onnx"),
+)
+LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", "0.5"))
+LIVENESS_CROP_SCALE = float(os.getenv("LIVENESS_CROP_SCALE", "1.5"))
+LIVENESS_INPUT_SIZE = (128, 128)
+USE_LIVENESS = os.getenv("USE_LIVENESS", "true").lower() == "true"
 
 # ========== Attendance ==========
 CHECKIN_COOLDOWN_SECONDS = int(os.getenv("CHECKIN_COOLDOWN_SECONDS", "300"))  # 5 min
@@ -103,6 +125,12 @@ NPU_CORE_MASK = int(os.getenv("NPU_CORE_MASK", "1"))
 SCRFD_NPU_CORE_MASK = int(os.getenv("SCRFD_NPU_CORE_MASK", "1"))   # core0
 ARCFACE_NPU_CORE_MASK = int(os.getenv("ARCFACE_NPU_CORE_MASK", "2"))  # core1
 YOLO_NPU_CORE_MASK = int(os.getenv("YOLO_NPU_CORE_MASK", "4"))  # core2
+LIVENESS_NPU_CORE_MASK = int(os.getenv("LIVENESS_NPU_CORE_MASK", "2"))  # core1
+GHOSTFACENET_NPU_CORE_MASK = int(os.getenv("GHOSTFACENET_NPU_CORE_MASK", "2"))  # core1
+USE_RGA = os.getenv("USE_RGA", "true").lower() == "true"
+RGA_LIB_PATH = os.getenv("RGA_LIB_PATH", "librga.so")
+MAX_FACES_PER_FRAME = int(os.getenv("MAX_FACES_PER_FRAME", "2"))
+USE_PIPELINE_V2 = os.getenv("USE_PIPELINE_V2", "false").lower() == "true"
 DEFAULT_EMBEDDING_MODEL_NAME = os.getenv(
     "DEFAULT_EMBEDDING_MODEL_NAME",
     "buffalo_sc_rknn_v1" if USE_NPU else "buffalo_l"

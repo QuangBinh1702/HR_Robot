@@ -37,6 +37,7 @@ from config.settings import (
     USE_NPU, DEFAULT_EMBEDDING_MODEL_NAME,
     SCRFD_RKNN_PATH, ARCFACE_RKNN_PATH,
     DETECTION_INPUT_SIZE, USE_PERSON_GATE, FACE_DETECT_INTERVAL,
+    USE_PIPELINE_V2,
 )
 from src.database.models import session_scope
 from src.database.repository import FaceRepository
@@ -46,6 +47,7 @@ from src.app_runtime import AppRuntime
 from src.api_server import start_api_server, broadcast_status
 from src.camera_utils import open_camera
 from src.pipeline_async import AsyncPersonGatedPipeline, draw_person_boxes
+from src.pipeline_v2 import AsyncPipelineV2
 
 
 def _warn_if_not_project_venv() -> None:
@@ -291,9 +293,13 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
         x1, y1, x2, y2 = r['bbox']
         name = r['name']
         conf = r['confidence']
+        status = r.get('status')
         
-        # Color: green=known, red=unknown
-        if name == "Người lạ":
+        # Color: orange=fake, green=known, red=unknown
+        if status == "FAKE":
+            color = (0, 165, 255)
+            label = f"FAKE ({r.get('liveness_score', 0.0):.2f})"
+        elif name in {"Người lạ", "Unknown"}:
             color = (0, 0, 255)  # Red
             label = f"Người lạ ({conf:.2f})"
         else:
@@ -306,7 +312,7 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
         # Label background
         tw, th = get_text_size_vn(label, _FONT_MEDIUM)
         cv2.rectangle(vis, (x1, y1 - th - 12), (x1 + tw + 4, y1), color, -1)
-        text_items.append((label, (x1 + 2, y1 - th - 10), _FONT_MEDIUM, (255, 255, 255)))
+        text_items.append((label, (x1 + 2, y1 - th - 10), _FONT_MEDIUM, (0, 0, 0)))
     
     # Top bar info
     bar_color = (0, 0, 200) if is_overloaded else (50, 50, 50)
@@ -319,9 +325,10 @@ def draw_results(frame: np.ndarray, results: list, fps: int, headcount_limit: in
     text_items.append((info, (10, 10), _FONT_LARGE, (255, 255, 255)))
     
     # Known/Unknown count
-    known = sum(1 for r in results if r['name'] != "Người lạ")
-    unknown = headcount - known
-    status = f"Thành viên: {known} | Người lạ: {unknown}"
+    known = sum(1 for r in results if r.get('member_id') is not None)
+    fake = sum(1 for r in results if r.get('status') == "FAKE")
+    unknown = headcount - known - fake
+    status = f"Thành viên: {known} | Người lạ: {unknown} | Fake: {fake}"
     text_items.append((status, (10, vis.shape[0] - 25), _FONT_SMALL, (200, 200, 200)))
 
     draw_texts_vn(vis, text_items)
@@ -457,12 +464,26 @@ def mode_recognition(pipeline: FaceRecognitionPipeline, attendance_manager=None,
     # Attendance manager (use shared instance if provided)
     attendance = attendance_manager or AttendanceManager(pipeline.repo)
 
-    runner = AsyncPersonGatedPipeline(
-        face_pipeline=pipeline,
-        attendance_manager=None,
-        on_status_update=None,
-    )
-    runner.start()
+    runner_cls = AsyncPipelineV2 if USE_PIPELINE_V2 else AsyncPersonGatedPipeline
+    try:
+        runner = runner_cls(
+            face_pipeline=pipeline,
+            attendance_manager=None,
+            on_status_update=None,
+        )
+        runner.start()
+    except Exception as e:
+        if runner_cls is AsyncPipelineV2:
+            print(f"[Pipeline] Pipeline V2 unavailable: {e}")
+            print("[Pipeline] Falling back to legacy async pipeline")
+            runner = AsyncPersonGatedPipeline(
+                face_pipeline=pipeline,
+                attendance_manager=None,
+                on_status_update=None,
+            )
+            runner.start()
+        else:
+            raise
 
     last_frame = None
     last_snapshot_id = -1
